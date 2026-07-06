@@ -1,0 +1,17 @@
+# deep_research — smoke-test profile
+#
+# Same endpoint wiring as default but tighter completion budgets, meant to
+# be paired with `--depth quick` for a cheap end-to-end run.
+
+default:
+  model: ${OPENAI_MODEL}
+  api_key: ${OPENAI_API_KEY}
+  base_url: ${OPENAI_BASE_URL}
+  temperature: 0.5
+  max_tokens: 4096
+
+roles:
+  dr_writer:
+    max_tokens: 8192
+  dr_verifier:
+    max_tokens: 8192
