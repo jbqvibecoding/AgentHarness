@@ -14,11 +14,15 @@ from __future__ import annotations
 
 from agent_harness.core.runtime.registries.workflows import WorkflowContext
 
-from workflows.deep_research.agents import ALL_AGENT_DEFS
-from workflows.deep_research.spec import DEEP_RESEARCH_SPEC
+from workflows.deep_research.agents import ALL_AGENT_DEFS, COUNCIL_AGENT_DEFS
+from workflows.deep_research.spec import (
+    DEEP_COUNCIL_RESEARCH_SPEC,
+    DEEP_RESEARCH_SPEC,
+)
 
 
 def register(ctx: WorkflowContext) -> None:
-    for agent_def in ALL_AGENT_DEFS:
+    for agent_def in ALL_AGENT_DEFS + COUNCIL_AGENT_DEFS:
         ctx.register_agent(agent_def)
     ctx.register_pipeline(DEEP_RESEARCH_SPEC)
+    ctx.register_pipeline(DEEP_COUNCIL_RESEARCH_SPEC)

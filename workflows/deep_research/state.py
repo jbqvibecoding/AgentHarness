@@ -90,4 +90,34 @@ REDUCED_LIST_FIELDS: tuple[str, ...] = (
 )
 
 
-__all__ = ["DeepResearchState", "REDUCED_LIST_FIELDS"]
+class CouncilState(TypedDict, total=False):
+    """State for the council pipelines (deep_council_research / model_council).
+
+    Dict shapes:
+
+    * ``members`` item: ``{name, slug, model}``.
+    * ``member_results`` item: ``{name, slug, status: ok|failed,
+      report (answer or full research paper), claim_table (deep only),
+      verification_summary (deep only), error}``.
+    * ``council``: the three-table dict — see ``council_tables.py``.
+    """
+
+    task_id: str
+    original_question: str
+    metadata: dict[str, Any]     # metadata["council_mode"] = "deep"|"light"
+
+    members: list[dict[str, Any]]
+    member_results: list[dict[str, Any]]
+
+    council: dict[str, Any]
+    council_tables_md: str
+    synthesis: str
+
+    report: str
+    final_content: str
+
+    errors: Annotated[list[str], operator.add]
+    current_phase: str
+
+
+__all__ = ["CouncilState", "DeepResearchState", "REDUCED_LIST_FIELDS"]

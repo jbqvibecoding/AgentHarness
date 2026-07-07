@@ -84,6 +84,16 @@ def _role_cfg(profile: dict[str, Any], role_id: str) -> dict[str, Any]:
     return base
 
 
+def register_runtime_profile(name: str, profile: dict[str, Any]) -> None:
+    """Register an in-memory profile (no YAML file), overwriting any prior.
+
+    Used by the council pipelines to force every deep_research role onto a
+    member model: the fan-out registers ``council/<slug>`` profiles and
+    sub-runs select them via ``metadata["profile"]``.
+    """
+    _cache[name] = (profile, {})
+
+
 def get_llm_for_role(role_id: str, profile_name: str = "default") -> LLMClient:
     """Return the (cached) LLM client for a role under a profile."""
     if profile_name not in _cache:

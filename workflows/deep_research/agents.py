@@ -84,6 +84,33 @@ VERIFIER_DEF = AgentDefinition(
     description="Final gate: per-claim audit vs verdicts, surgical corrections, honest summary.",
 )
 
+# Council roles (deep_council_research / model_council). Not part of
+# ALL_AGENT_DEFS — they ride the council specs' agent_definitions instead.
+COUNCIL_ANALYST_DEF = AgentDefinition(
+    role_id="dr_council_analyst",
+    display_name="Council Analyst",
+    system_prompt="",  # council_prompts.COUNCIL_ANALYST_SYSTEM at call time
+    allowed_tools=[],
+    color="#8b5cf6",
+    icon="table",
+    description="Compares member-model outputs into agree/disagree/unique tables.",
+)
+
+COUNCIL_SYNTH_DEF = AgentDefinition(
+    role_id="dr_council_synthesizer",
+    display_name="Council Synthesizer",
+    system_prompt="",
+    allowed_tools=[],
+    color="#0ea5e9",
+    icon="merge",
+    description="Merges member-model outputs into one combined answer/synthesis.",
+)
+
+COUNCIL_AGENT_DEFS: list[AgentDefinition] = [
+    COUNCIL_ANALYST_DEF,
+    COUNCIL_SYNTH_DEF,
+]
+
 ALL_AGENT_DEFS: list[AgentDefinition] = [
     PLANNER_DEF,
     RESEARCHER_DEF,
@@ -96,6 +123,9 @@ ALL_AGENT_DEFS: list[AgentDefinition] = [
 
 __all__ = [
     "ALL_AGENT_DEFS",
+    "COUNCIL_AGENT_DEFS",
+    "COUNCIL_ANALYST_DEF",
+    "COUNCIL_SYNTH_DEF",
     "PLANNER_DEF",
     "RESEARCHER_DEF",
     "FACT_CHECKER_DEF",

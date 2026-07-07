@@ -22,7 +22,7 @@ from agent_harness.models.pipeline_spec import (
     TransitionSpec,
 )
 
-from workflows.deep_research.agents import ALL_AGENT_DEFS
+from workflows.deep_research.agents import ALL_AGENT_DEFS, COUNCIL_AGENT_DEFS
 
 _NODES_PKG = "workflows.deep_research.nodes"
 _CONDITIONS = "workflows.deep_research.conditions"
@@ -123,4 +123,53 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
     ],
 )
 
-__all__ = ["DEEP_RESEARCH_SPEC"]
+# ---------------------------------------------------------------------------
+# Deep Council Research — one full deep_research run per council member,
+# then cross-model analysis (agree / disagree / unique) + synthesis.
+# ---------------------------------------------------------------------------
+
+DEEP_COUNCIL_RESEARCH_SPEC = PipelineSpec(
+    pipeline_id="deep_council_research",
+    name="Deep Council Research (multi-model)",
+    description=(
+        "Runs the full deep_research pipeline once per council member "
+        "model (COUNCIL_MODEL_* slots), producing one research paper per "
+        "model, then a council analyst maps where the models agree, "
+        "disagree, and what each uniquely discovered, and a synthesizer "
+        "writes the combined executive report."
+    ),
+    entry_point="council_research_fanout",
+    terminal_nodes=["council_synthesis"],
+    state_type="workflows.deep_research.state.CouncilState",
+    agent_definitions=COUNCIL_AGENT_DEFS,
+    nodes=[
+        NodeDefinition(
+            node_id="council_research_fanout",
+            role_id="dr_council_analyst",
+            node_function=(
+                f"{_NODES_PKG}.council_fanout.council_research_fanout_node"
+            ),
+            display_label="Running full research once per council model",
+            output_fields=["members", "member_results"],
+        ),
+        NodeDefinition(
+            node_id="council_synthesis",
+            role_id="dr_council_synthesizer",
+            node_function=(
+                f"{_NODES_PKG}.council_synthesis.council_synthesis_node"
+            ),
+            display_label="Comparing models and synthesizing the council report",
+            output_fields=["council", "council_tables_md", "synthesis",
+                           "report", "final_content"],
+        ),
+    ],
+    transitions=[
+        TransitionSpec(
+            from_phase="council_research_fanout",
+            to_phase="council_synthesis",
+        ),
+        TransitionSpec(from_phase="council_synthesis", to_phase="__END__"),
+    ],
+)
+
+__all__ = ["DEEP_COUNCIL_RESEARCH_SPEC", "DEEP_RESEARCH_SPEC"]

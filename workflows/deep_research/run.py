@@ -55,6 +55,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Output directory (default: runs/deep_research/<timestamp>)",
     )
     parser.add_argument(
+        "--pipeline",
+        choices=["deep_research", "deep_council_research", "model_council"],
+        default="deep_research",
+        help=(
+            "deep_research: single-model multi-agent research. "
+            "deep_council_research: full research once per COUNCIL_MODEL_* "
+            "member plus comparison tables. model_council: lightweight "
+            "multi-model answers plus comparison tables (no web research)."
+        ),
+    )
+    parser.add_argument(
         "--depth", choices=["quick", "standard", "deep"], default="standard",
     )
     parser.add_argument("--profile", default="default")
@@ -113,6 +124,39 @@ def _dry_run() -> int:
     assert DEEP_RESEARCH_SPEC.entry_point in node_ids
     assert len(dag.nodes) == 7, f"expected 7 nodes, got {len(dag.nodes)}"
 
+    # Council pipelines: graphs build, shared synthesis node resolves, and
+    # the table renderers produce sane output for a sample council dict.
+    from workflows.deep_research.council_tables import (
+        normalize_council,
+        render_council_html,
+        render_markdown_tables,
+    )
+    from workflows.deep_research.spec import DEEP_COUNCIL_RESEARCH_SPEC
+    from workflows.deep_research.state import CouncilState
+    from workflows.model_council.spec import MODEL_COUNCIL_SPEC
+
+    for spec in (DEEP_COUNCIL_RESEARCH_SPEC, MODEL_COUNCIL_SPEC):
+        cdag = DynamicGraphBuilder().build(spec, CouncilState)
+        assert len(cdag.nodes) == 2, f"{spec.pipeline_id}: bad node count"
+
+    names = ["Model A", "Model B"]
+    sample = normalize_council({
+        "agreements": [{"finding": "f1", "models": names,
+                        "evidence": "e1", "citations": ["src"]}],
+        "disagreements": [{"topic": "t1",
+                           "positions": {"Model A": "yes"},
+                           "why_differ": "risk tolerance"}],
+        "unique": [{"model": "Model B", "finding": "u1",
+                    "why_it_matters": "matters"}],
+    }, names)
+    md = render_markdown_tables(sample, names)
+    html_page = render_council_html(sample, names, "q?", "light")
+    assert "Where Models Agree" in md and "✓" in md
+    assert "Not addressed" in md, "missing member must be filled in"
+    assert "Model B" in html_page and "✓" in html_page
+    assert "<style>" in html_page  # self-contained: inline CSS only
+    assert "src=" not in html_page and "href=" not in html_page
+
     reducers = extract_reducers(DeepResearchState)
     for field in REDUCED_LIST_FIELDS:
         assert field in reducers, f"missing reducer for {field}"
@@ -140,7 +184,10 @@ def _dry_run() -> int:
         "review_verdict": "approve", "revision_count": 0, "metadata": meta,
     }) == "final_verify"
 
-    print("deep_research dry-run OK: 7 nodes, reducers wired, routing sane")
+    print(
+        "deep_research dry-run OK: 3 pipelines build, reducers wired, "
+        "routing sane, council renderers sane",
+    )
     return 0
 
 
@@ -182,11 +229,24 @@ async def _execute(args: argparse.Namespace, out_dir: Path) -> dict[str, Any]:
             "current_phase": "",
             "errors": [],
         }
+        if args.pipeline != "deep_research":
+            input_data["metadata"]["council_mode"] = (
+                "deep" if args.pipeline == "deep_council_research"
+                else "light"
+            )
+            input_data.update({
+                "members": [],
+                "member_results": [],
+                "council": {},
+                "council_tables_md": "",
+                "synthesis": "",
+            })
 
         emit({"event": "run_start", "question": args.question,
+              "pipeline": args.pipeline,
               "depth": args.depth, "profile": args.profile})
         async for _mode, chunk in session.scheduler.execute(
-            task.id, input_data, pipeline_id="deep_research",
+            task.id, input_data, pipeline_id=args.pipeline,
         ):
             if isinstance(chunk, dict) and chunk:
                 node = next(iter(chunk))
@@ -199,6 +259,60 @@ async def _execute(args: argparse.Namespace, out_dir: Path) -> dict[str, Any]:
         state = await session.scheduler.get_state(task.id) or {}
         emit({"event": "run_end"})
         return state
+
+
+def _write_council_artifacts(
+    args: argparse.Namespace, out_dir: Path, state: dict[str, Any],
+) -> dict[str, Any]:
+    """Write per-member outputs + council.json + council.html; return the
+    result.json fields describing them."""
+    from workflows.deep_research.council_tables import render_council_html
+
+    mode = "deep" if args.pipeline == "deep_council_research" else "light"
+    artifact_dir = out_dir / ("papers" if mode == "deep" else "answers")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    member_results = state.get("member_results") or []
+    member_papers: dict[str, str] = {}
+    for res in member_results:
+        if res.get("status") != "ok" or not res.get("report"):
+            continue
+        path = artifact_dir / f"{res['slug']}.md"
+        path.write_text(res["report"], encoding="utf-8")
+        member_papers[res["name"]] = str(path.resolve())
+
+    member_names = [
+        r["name"] for r in member_results if r.get("status") == "ok"
+    ]
+    council = state.get("council") or {}
+
+    council_json_path = out_dir / "council.json"
+    council_json_path.write_text(
+        json.dumps({
+            "question": state.get("original_question", ""),
+            "mode": args.pipeline,
+            "members": member_names,
+            "synthesis": state.get("synthesis", ""),
+            **council,
+        }, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+    council_html_path = out_dir / "council.html"
+    council_html_path.write_text(
+        render_council_html(
+            council, member_names,
+            state.get("original_question", ""), mode,
+        ),
+        encoding="utf-8",
+    )
+
+    return {
+        "members": member_names,
+        "member_papers": member_papers,
+        "council_json_path": str(council_json_path.resolve()),
+        "council_html_path": str(council_html_path.resolve()),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -219,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result: dict[str, Any] = {
         "status": "error",
+        "mode": args.pipeline,
         "question": args.question,
         "report_path": "",
         "summary": "",
@@ -252,6 +367,8 @@ def main(argv: list[str] | None = None) -> int:
             "iterations": int(state.get("research_iteration", 0)),
             "errors": list(state.get("errors") or []),
         })
+        if args.pipeline != "deep_research":
+            result.update(_write_council_artifacts(args, out_dir, state))
     except Exception as exc:  # noqa: BLE001 — result.json carries the error
         logger.exception("deep_research run failed")
         result["error"] = f"{type(exc).__name__}: {exc}"

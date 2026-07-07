@@ -11,6 +11,29 @@ default:
   temperature: 0.7
   max_tokens: 8192
 
+# Council member slots (deep_council_research / model_council pipelines).
+# Slots whose model resolves empty are skipped; at least 2 members must be
+# configured for the council pipelines to run. base_url/api_key fall back
+# to `default` above, so one OpenRouter-style endpoint needs only the
+# COUNCIL_MODEL_n vars. COUNCIL_SYNTH_MODEL picks the analyst/synthesizer
+# model (empty -> default model).
+council:
+  members:
+    - name: ${COUNCIL_NAME_1}
+      model: ${COUNCIL_MODEL_1}
+      base_url: ${COUNCIL_BASE_URL_1}
+      api_key: ${COUNCIL_API_KEY_1}
+    - name: ${COUNCIL_NAME_2}
+      model: ${COUNCIL_MODEL_2}
+      base_url: ${COUNCIL_BASE_URL_2}
+      api_key: ${COUNCIL_API_KEY_2}
+    - name: ${COUNCIL_NAME_3}
+      model: ${COUNCIL_MODEL_3}
+      base_url: ${COUNCIL_BASE_URL_3}
+      api_key: ${COUNCIL_API_KEY_3}
+  synthesizer:
+    model: ${COUNCIL_SYNTH_MODEL}
+
 roles:
   # Long-form synthesis benefits from a bigger completion budget.
   dr_writer:
