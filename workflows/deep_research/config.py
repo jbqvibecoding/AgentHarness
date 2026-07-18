@@ -29,6 +29,13 @@ _DEFAULTS: dict[str, Any] = {
     "subagent_timeout_s": 900,
     "verifier_spot_check": False,
     "verifier_spot_check_turns": 4,
+    # hyperresearch-inspired enhancements (standard default):
+    "use_vault": True,               # mirror fetched pages into an FTS vault
+    "build_contradiction_graph": True,  # conflict_check builds graph + loci
+    "loci_max": 3,                   # max contested loci to deep-dive
+    "num_critics": 4,                # adversarial critics (dialectic/depth/width/instruction)
+    "patch_revision": True,          # revise via surgical edit hunks, not full regen
+    "enable_polish": True,           # terminal filler/scaffold cleanup
 }
 
 DEPTH_PRESETS: dict[str, dict[str, Any]] = {
@@ -40,6 +47,12 @@ DEPTH_PRESETS: dict[str, dict[str, Any]] = {
         "fact_checker_max_turns": 4,
         "max_cards_to_check": 4,
         "subagent_timeout_s": 480,
+        # Lean path — keep quick smoke fast and cheap.
+        "build_contradiction_graph": False,
+        "loci_max": 0,
+        "num_critics": 1,
+        "patch_revision": False,
+        "enable_polish": False,
     },
     "standard": {},
     "deep": {
@@ -51,6 +64,7 @@ DEPTH_PRESETS: dict[str, dict[str, Any]] = {
         "max_cards_to_check": 16,
         "subagent_timeout_s": 1500,
         "verifier_spot_check": True,
+        "loci_max": 6,
     },
 }
 

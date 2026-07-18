@@ -113,6 +113,7 @@ async def final_verify_node(
 
     report = draft
     summary = ""
+    patch_log: list[dict[str, Any]] = []
     try:
         user_prompt = build_verify_prompt(
             report=draft,
@@ -131,17 +132,23 @@ async def final_verify_node(
         )
         data = extract_json_block(raw)
         if isinstance(data, dict):
-            corrected = str(data.get("corrected_report") or "").strip()
             summary = str(data.get("verification_summary") or "").strip()
-            # Guard against a verifier that "corrects" by truncating the
-            # report away — keep the draft unless the correction is a
-            # plausible full document.
-            if corrected and len(corrected) >= 0.5 * len(draft):
-                report = corrected
-            elif corrected:
-                errors.append(
-                    "final_verify: corrected report suspiciously short — "
-                    "keeping draft",
+            hunks = data.get("hunks") or []
+            if hunks:
+                from workflows.deep_research.patch import apply_edit_hunks
+
+                report, plog = apply_edit_hunks(
+                    draft, hunks,
+                    citation_mapping=state.get("citation_mapping") or {},
+                )
+                applied = sum(1 for e in plog if e["applied"])
+                patch_log = [{
+                    "phase": "verify", "applied": applied,
+                    "total": len(hunks), "log": plog,
+                }]
+                logger.info(
+                    "final_verify: %d/%d correction hunks applied",
+                    applied, len(hunks),
                 )
         else:
             errors.append("final_verify: unparseable verifier output")
@@ -165,6 +172,7 @@ async def final_verify_node(
         "report": final_report,
         "final_content": final_report,
         "verification_summary": summary,
+        "patch_log": patch_log,
         "errors": errors,
         "current_phase": "final_verify",
     }

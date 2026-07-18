@@ -14,10 +14,17 @@ from typing import Any
 from agent_harness.models.node_context import NodeContext
 
 from workflows.deep_research.citations import citation_listing, normalize_url
+from workflows.deep_research.config import get_cfg
+from workflows.deep_research.hyper_prompts import (
+    PATCH_REVISE_SYSTEM,
+    build_patch_revise_prompt,
+)
 from workflows.deep_research.nodes.common import call_role_llm, today, usable_cards
+from workflows.deep_research.patch import apply_edit_hunks
 from workflows.deep_research.prompts import (
     WRITER_SYSTEM,
     build_draft_prompt,
+    extract_json_block,
     with_date,
 )
 
@@ -72,12 +79,65 @@ def _evidence_blocks(state: dict[str, Any], budget: int) -> str:
     return text
 
 
+async def _patch_revise(
+    state: dict[str, Any], ctx: NodeContext,
+    feedback: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Revise the existing draft via surgical edit hunks (patch, never
+    regenerate). Returns a node delta, or None to fall back to full regen
+    when no hunk could be applied."""
+    draft = state.get("draft_report", "")
+    if not draft:
+        return None
+    try:
+        raw = await call_role_llm(
+            role_id="dr_writer", state=state,
+            system_prompt=PATCH_REVISE_SYSTEM,
+            user_prompt=build_patch_revise_prompt(draft, feedback),
+            timeout_s=900.0,
+        )
+    except RuntimeError as exc:
+        logger.warning("draft patch-revise LLM failed: %s — full regen", exc)
+        return None
+    data = extract_json_block(raw)
+    hunks = data.get("hunks") if isinstance(data, dict) else None
+    if not hunks:
+        return None
+    new_text, log = apply_edit_hunks(
+        draft, hunks, citation_mapping=state.get("citation_mapping") or {},
+    )
+    applied = [e for e in log if e["applied"]]
+    if not applied:
+        logger.info("draft patch-revise: no hunk applied — full regen")
+        return None
+    escalated = data.get("escalated") if isinstance(data, dict) else []
+    logger.info(
+        "deep_research draft/patch (task=%s): %d/%d hunks applied",
+        ctx.task_id, len(applied), len(hunks),
+    )
+    return {
+        "draft_report": new_text,
+        "patch_log": [{
+            "phase": "revision", "applied": len(applied),
+            "total": len(hunks), "log": log,
+            "escalated": list(escalated or []),
+        }],
+        "current_phase": "draft",
+    }
+
+
 async def draft_node(state: dict[str, Any], ctx: NodeContext) -> dict[str, Any]:
     feedback = (
         state.get("review_feedback")
         if state.get("review_verdict") == "revise"
         else None
     )
+    # Revision path: prefer surgical patches over regenerating the report.
+    if feedback and bool(get_cfg(state, "patch_revision")):
+        patched = await _patch_revise(state, ctx, feedback)
+        if patched is not None:
+            return patched
+
     listing = citation_listing(state.get("citation_mapping") or {})
     system = with_date(WRITER_SYSTEM, today())
 

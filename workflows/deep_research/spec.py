@@ -37,7 +37,7 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
         "drafts, reviews, and globally verifies a cited report."
     ),
     entry_point="plan",
-    terminal_nodes=["final_verify"],
+    terminal_nodes=["polish"],
     state_type="workflows.deep_research.state.DeepResearchState",
     agent_definitions=ALL_AGENT_DEFS,
     nodes=[
@@ -99,6 +99,13 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
             display_label="Final global verification",
             output_fields=["report", "final_content", "verification_summary"],
         ),
+        NodeDefinition(
+            node_id="polish",
+            role_id="dr_reviewer",
+            node_function=f"{_NODES_PKG}.polish.polish_node",
+            display_label="Polishing the final report",
+            output_fields=["report", "final_content"],
+        ),
     ],
     transitions=[
         TransitionSpec(from_phase="plan", to_phase="research_fanout"),
@@ -119,7 +126,8 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
             condition=f"{_CONDITIONS}.route_after_review",
         ),
         TransitionSpec(from_phase="review", to_phase="final_verify"),
-        TransitionSpec(from_phase="final_verify", to_phase="__END__"),
+        TransitionSpec(from_phase="final_verify", to_phase="polish"),
+        TransitionSpec(from_phase="polish", to_phase="__END__"),
     ],
 )
 

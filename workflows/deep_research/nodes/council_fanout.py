@@ -11,6 +11,7 @@ all-member failure sinks the pipeline.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from agent_harness.core.runtime.dag.graph_builder import DynamicGraphBuilder
@@ -41,7 +42,7 @@ def _member_seed(
     meta = dict(state.get("metadata") or {})
     meta["profile"] = profile_id
     meta["deep_research"] = dict(meta.get("deep_research") or {})
-    return {
+    seed = {
         "task_id": f"{state.get('task_id', 'council')}-{member['slug']}",
         "original_question": state.get("original_question", ""),
         "metadata": meta,
@@ -51,15 +52,27 @@ def _member_seed(
         "fact_check_results": [],
         "conflicts": [],
         "gap_questions": [],
+        "contradiction_graph": [],
+        "consensus_claims": [],
+        "loci": [],
         "review_feedback": [],
         "citation_mapping": {},
         "research_iteration": 0,
         "revision_count": 0,
+        "patch_log": [],
+        "polish_log": [],
         "report": None,
         "final_content": "",
         "current_phase": "",
         "errors": [],
     }
+    # Members share one evidence vault (sources are model-agnostic facts),
+    # so a page fetched by one member is reusable by the others. Each
+    # member writes into a per-member subdir to avoid sqlite write races.
+    parent_vault = state.get("vault_dir")
+    if parent_vault:
+        seed["vault_dir"] = str(Path(parent_vault) / member["slug"])
+    return seed
 
 
 async def council_research_fanout_node(

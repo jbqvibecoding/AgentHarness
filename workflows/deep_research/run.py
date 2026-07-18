@@ -77,6 +77,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Extra JSON merged into metadata['deep_research']",
     )
     parser.add_argument(
+        "--no-vault", action="store_true",
+        help="Disable the evidence vault (sources are not stored/reused)",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Validate registration + graph build; no LLM calls",
     )
@@ -122,7 +126,26 @@ def _dry_run() -> int:
     dag = DynamicGraphBuilder().build(DEEP_RESEARCH_SPEC, DeepResearchState)
     node_ids = {n.node_id for n in DEEP_RESEARCH_SPEC.resolved_nodes}
     assert DEEP_RESEARCH_SPEC.entry_point in node_ids
-    assert len(dag.nodes) == 7, f"expected 7 nodes, got {len(dag.nodes)}"
+    assert len(dag.nodes) == 8, f"expected 8 nodes, got {len(dag.nodes)}"
+    assert "polish" in node_ids and DEEP_RESEARCH_SPEC.resolved_terminal_nodes == ["polish"]
+
+    # hyperresearch patch/citation engine sanity (pure functions, no LLM).
+    from workflows.deep_research.patch import (
+        apply_edit_hunks,
+        strip_filler,
+        validate_citations,
+    )
+    _t, _log = apply_edit_hunks(
+        "A 30% rise [1].", [{"old": "30%", "new": "25%", "reason": "fix"}],
+        citation_mapping={"1": {}},
+    )
+    assert "25%" in _t and _log[0]["applied"]
+    assert apply_edit_hunks(
+        "x [1]", [{"old": "x", "new": "x [9]", "reason": ""}],
+        citation_mapping={"1": {}},
+    )[1][0]["status"] == "breaks-citations"
+    assert validate_citations("a [2]", {"1": {}}) == [2]
+    assert strip_filler("Importantly, X.", ("Importantly, ",))[1] == 1
 
     # Council pipelines: graphs build, shared synthesis node resolves, and
     # the table renderers produce sane output for a sample council dict.
@@ -185,8 +208,9 @@ def _dry_run() -> int:
     }) == "final_verify"
 
     print(
-        "deep_research dry-run OK: 3 pipelines build, reducers wired, "
-        "routing sane, council renderers sane",
+        "deep_research dry-run OK: 3 pipelines build (deep_research=8 nodes), "
+        "reducers wired, routing sane, council renderers sane, "
+        "patch/citation engine sane",
     )
     return 0
 
@@ -220,15 +244,25 @@ async def _execute(args: argparse.Namespace, out_dir: Path) -> dict[str, Any]:
             "fact_check_results": [],
             "conflicts": [],
             "gap_questions": [],
+            "contradiction_graph": [],
+            "consensus_claims": [],
+            "loci": [],
             "review_feedback": [],
             "citation_mapping": {},
             "research_iteration": 0,
             "revision_count": 0,
+            "patch_log": [],
+            "polish_log": [],
             "report": None,
             "final_content": "",
             "current_phase": "",
             "errors": [],
         }
+        # Evidence vault lives under the run's output dir (unless disabled).
+        if not args.no_vault:
+            input_data["vault_dir"] = str(out_dir)
+        else:
+            input_data["metadata"]["deep_research"]["use_vault"] = False
         if args.pipeline != "deep_research":
             input_data["metadata"]["council_mode"] = (
                 "deep" if args.pipeline == "deep_council_research"
@@ -315,6 +349,33 @@ def _write_council_artifacts(
     }
 
 
+def _write_enhancement_artifacts(
+    out_dir: Path, state: dict[str, Any],
+) -> dict[str, Any]:
+    """Write patch-log / polish-log / vault stats; return result.json fields."""
+    fields: dict[str, Any] = {}
+    patch_log = state.get("patch_log") or []
+    if patch_log:
+        p = out_dir / "patch-log.json"
+        p.write_text(json.dumps(patch_log, ensure_ascii=False, indent=2),
+                     encoding="utf-8")
+        fields["patch_log_path"] = str(p.resolve())
+    polish_log = state.get("polish_log") or []
+    if polish_log:
+        p = out_dir / "polish-log.json"
+        p.write_text(json.dumps(polish_log, ensure_ascii=False, indent=2),
+                     encoding="utf-8")
+        fields["polish_log_path"] = str(p.resolve())
+    vault_dir = state.get("vault_dir")
+    if vault_dir:
+        notes = Path(vault_dir) / "vault" / "research" / "notes"
+        fields["vault_dir"] = str((Path(vault_dir) / "vault").resolve())
+        fields["vault_source_count"] = (
+            len(list(notes.glob("*.md"))) if notes.exists() else 0
+        )
+    return fields
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -366,7 +427,10 @@ def main(argv: list[str] | None = None) -> int:
             "evidence_count": len(state.get("evidence_cards") or []),
             "iterations": int(state.get("research_iteration", 0)),
             "errors": list(state.get("errors") or []),
+            "loci_count": len(state.get("loci") or []),
+            "contradiction_clusters": len(state.get("contradiction_graph") or []),
         })
+        result.update(_write_enhancement_artifacts(out_dir, state))
         if args.pipeline != "deep_research":
             result.update(_write_council_artifacts(args, out_dir, state))
     except Exception as exc:  # noqa: BLE001 — result.json carries the error

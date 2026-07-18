@@ -122,6 +122,13 @@ async def fact_check_node(
     timeout_s = float(get_cfg(state, "subagent_timeout_s"))
     prof = profile_name(state)
 
+    vault_dir = state.get("vault_dir")
+    scope_meta = (
+        {"vault_dir": vault_dir}
+        if vault_dir and bool(get_cfg(state, "use_vault"))
+        else None
+    )
+
     logger.info(
         "deep_research fact_check (task=%s): %d cards in %d batches",
         ctx.task_id, len(to_check), len(batches),
@@ -137,6 +144,7 @@ async def fact_check_node(
                 task_id=ctx.task_id,
                 profile_name=prof,
                 timeout_s=timeout_s,
+                scope_metadata=scope_meta,
             )
             for batch in batches
         ],

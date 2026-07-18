@@ -139,27 +139,55 @@ async def research_fanout_node(
     parallel = int(get_cfg(state, "max_parallel_subagents"))
     prof = profile_name(state)
 
+    # Optional evidence vault: fetched pages are mirrored here so
+    # fact-checkers can re-read them without re-fetching. No-ops when the
+    # vault is disabled or hyperresearch is not installed.
+    vault_dir = state.get("vault_dir")
+    vault = None
+    scope_meta = None
+    if vault_dir and bool(get_cfg(state, "use_vault")):
+        from workflows.deep_research.vault import open_vault
+
+        vault = open_vault(vault_dir, enabled=True)
+        if vault is not None:
+            scope_meta = {"vault_dir": vault_dir}
+
     logger.info(
         "deep_research research iteration %d (task=%s): %d sub-agents, "
-        "parallel=%d, max_turns=%d",
+        "parallel=%d, max_turns=%d, vault=%s",
         iteration, ctx.task_id, len(targets), parallel, max_turns,
+        "on" if vault is not None else "off",
     )
+
+    def _observers_for(sq_id: str) -> list[Any] | None:
+        if vault is None:
+            return None
+        from workflows.deep_research.vault import VaultWriterObserver
+
+        return [VaultWriterObserver(vault, suggested_by=sq_id)]
 
     results = await gather_with_limit(
         [
             run_subagent(
                 role_id="dr_researcher",
                 system_prompt=system,
-                user_message=build_research_prompt(t["question"], brief),
+                user_message=build_research_prompt(
+                    t["question"], brief,
+                    locus=t if t.get("flavor") == "locus" else None,
+                ),
                 max_turns=max_turns,
                 task_id=ctx.task_id,
                 profile_name=prof,
                 timeout_s=timeout_s,
+                extra_observers=_observers_for(t["id"]),
+                scope_metadata=scope_meta,
             )
             for t in targets
         ],
         limit=parallel,
     )
+    if vault is not None:
+        vault.close()
 
     new_cards: list[dict[str, Any]] = []
     new_notes: list[dict[str, Any]] = []

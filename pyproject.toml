@@ -29,6 +29,13 @@ dependencies = [
 dev = [
     "ruff>=0.7",
 ]
+# Persistent evidence vault for the deep_research workflow (FTS5 source
+# store + provenance + dedup), reusing the hyperresearch engine. Optional:
+# workflows/deep_research/vault.py lazily imports it and degrades to a
+# no-op (pipeline behaves as before) when it is not installed.
+vault = [
+    "hyperresearch>=0.8,<1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

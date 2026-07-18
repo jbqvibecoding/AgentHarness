@@ -177,13 +177,38 @@ End your final message with an EVIDENCE block — a fenced JSON array of evidenc
 Rules: one claim per card; every card needs at least one source URL you actually consulted; "flags" is [] when nothing is suspicious; confidence reflects source quality (official/primary > research > news > community > inference)."""
 
 
-def build_research_prompt(sub_question: str, brief: str) -> str:
-    return (
+def build_research_prompt(
+    sub_question: str,
+    brief: str,
+    locus: dict[str, Any] | None = None,
+) -> str:
+    """Researcher user message.
+
+    When ``locus`` is provided (a re-research target from the contradiction
+    /loci audit), the researcher works a specific point of contention with
+    a source budget and must end with a committed position — the
+    hyperresearch depth-investigation contract.
+    """
+    parts = [
         "Overall research brief (context only — your job is the "
-        f"sub-question):\n{brief}\n\n"
-        f"Your sub-question:\n{sub_question}\n\n"
-        "Research it now and finish with the EVIDENCE JSON block."
-    )
+        f"sub-question):\n{brief}\n",
+        f"Your sub-question:\n{sub_question}\n",
+    ]
+    if locus:
+        budget = locus.get("source_budget")
+        parts.append(
+            "This is a DEPTH investigation of a specific point of "
+            "contention identified by the conflict audit"
+            + (f" (aim for ~{budget} sources)." if budget else ".")
+            + "\nAfter gathering evidence, you MUST end your findings with "
+            "a committed position: pick the better-supported side (or a "
+            "synthesis), state your confidence, and say what evidence "
+            "would change your mind. Then still output the EVIDENCE JSON "
+            "block. Add \"committed_position\" text to the flags of your "
+            "strongest card."
+        )
+    parts.append("Research it now and finish with the EVIDENCE JSON block.")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +218,7 @@ def build_research_prompt(sub_question: str, brief: str) -> str:
 FACT_CHECKER_SYSTEM = """You are a fact-checker verifying evidence cards produced by researchers. Today's date is {date}.
 
 Citations from language models have a high error rate — never trust a card on its face. For EVERY card you check:
-1. web_fetch the cited source URL and confirm the page actually supports the claim and contains (or closely matches) the quote.
+1. Re-read the cited source. FIRST call vault_get(source_url) — the page was very likely already fetched and stored in this run's evidence vault, so this is instant and free. Only if vault_get reports the URL is not in the vault, fall back to web_fetch. Confirm the page actually supports the claim and contains (or closely matches) the quote.
 2. Cross-reference: run 1-2 independent web_search queries to confirm or refute the claim from other sources. Verify basic facts (dates, names, numbers, ownership) and note when sources disagree.
 3. Calibrate confidence by source reliability: official/primary 1.0, peer-reviewed research 0.95, established news 0.8, community 0.6, inference 0.5, speculation 0.3.
 
@@ -389,13 +414,15 @@ You receive the report, the claim table with fact-check verdicts, and the confli
 2. Citation audit — every [n] must exist in the reference list and point at the evidence that actually backs the sentence.
 3. Consistency — the report must not state as fact anything the conflict audit left unresolved.
 
-You may make surgical corrections to the report text (fix wrong numbers, hedge unverified statements, remove fabrications). Do NOT restructure or rewrite style.
+You make corrections ONLY as surgical edit hunks (the "patch, never regenerate" discipline) — fix wrong numbers, hedge unverified statements, remove fabrications. Do NOT restructure, rewrite style, or reproduce the whole report. Each hunk's "old" must be copied VERBATIM from the report and occur exactly once; preserve inline [n] citations. If nothing needs correcting, return an empty hunks list.
 
 Honesty rule: if something could not be verified, say so concretely in the verification summary — never claim the report is fully verified when it is not. State what was checked, what was corrected, and what remains unverified, with an overall confidence statement.
 
 Return ONLY a JSON object:
 {
-  "corrected_report": "full corrected report markdown (or the original if no edits were needed)",
+  "hunks": [
+    {"old": "verbatim text to find", "new": "corrected text", "reason": "why"}
+  ],
   "verification_summary": "what was audited, corrections made, items that remain unverified, overall confidence"
 }"""
 

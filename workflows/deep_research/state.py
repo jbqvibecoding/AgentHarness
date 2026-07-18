@@ -63,6 +63,18 @@ class DeepResearchState(TypedDict, total=False):
     conflicts: list[dict[str, Any]]
     gap_questions: list[dict[str, Any]]
 
+    # hyperresearch contradiction-graph + loci (replaced each round)
+    contradiction_graph: list[dict[str, Any]]
+    consensus_claims: list[dict[str, Any]]
+    loci: list[dict[str, Any]]
+
+    # evidence vault (hyperresearch): filesystem dir; None/absent = disabled
+    vault_dir: str
+
+    # patch / critic bookkeeping
+    patch_log: Annotated[list[dict[str, Any]], operator.add]
+    polish_log: list[dict[str, Any]]
+
     # writing loop
     draft_report: str
     review_verdict: str
@@ -87,6 +99,7 @@ REDUCED_LIST_FIELDS: tuple[str, ...] = (
     "research_notes",
     "fact_check_results",
     "errors",
+    "patch_log",
 )
 
 

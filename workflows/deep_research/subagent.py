@@ -74,12 +74,18 @@ async def run_subagent(
     profile_name: str = "default",
     timeout_s: float = 900.0,
     tool_result_max_chars: int = 30_000,
+    extra_observers: list[Any] | None = None,
+    scope_metadata: dict[str, Any] | None = None,
 ) -> AgentLoopResult:
     """Run one isolated ReAct sub-agent and return its loop result.
 
     Raises ``asyncio.TimeoutError`` on wall-clock overrun and propagates
     loop-level infra errors — callers decide whether a branch failure is
     fatal (fan-out nodes treat it as a failed sub-question).
+
+    ``extra_observers`` are appended to the default rollback stack (e.g. a
+    ``VaultWriterObserver``); ``scope_metadata`` is merged into the loop's
+    ExecutionScope (e.g. ``{"vault_dir": ...}`` for the vault tools).
     """
     from workflows.deep_research.profile import get_llm_for_role
 
@@ -103,6 +109,10 @@ async def run_subagent(
         max_completion_tokens=16_384,
     )
 
+    observers = _build_observers(tool_names)
+    if extra_observers:
+        observers = observers + list(extra_observers)
+
     result = await asyncio.wait_for(
         run_agent_loop(
             system_prompt=system_prompt,
@@ -110,7 +120,8 @@ async def run_subagent(
             llm=llm,
             tools=tools,
             config=config,
-            observers=_build_observers(tool_names),
+            observers=observers,
+            scope_metadata=scope_metadata,
         ),
         timeout=timeout_s,
     )
