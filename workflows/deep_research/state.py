@@ -122,6 +122,10 @@ class CouncilState(TypedDict, total=False):
     members: list[dict[str, Any]]
     member_results: list[dict[str, Any]]
 
+    # peer review (anonymized cross-ranking); empty when the stage is off
+    peer_reviews: list[dict[str, Any]]   # {evaluator, ranking, critiques, top_reason}
+    peer_ranking: list[dict[str, Any]]   # {model, peer_score, average_rank, ballots_counted}
+
     council: dict[str, Any]
     council_tables_md: str
     synthesis: str

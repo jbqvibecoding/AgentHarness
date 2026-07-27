@@ -36,6 +36,13 @@ _DEFAULTS: dict[str, Any] = {
     "num_critics": 4,                # adversarial critics (dialectic/depth/width/instruction)
     "patch_revision": True,          # revise via surgical edit hunks, not full regen
     "enable_polish": True,           # terminal filler/scaffold cleanup
+    # Council peer review (anonymized cross-ranking among member models).
+    # Off by default: it adds one LLM call per member, so the default
+    # council path keeps its current cost. Never enabled by a depth preset
+    # — only an explicit --peer-review / tool argument turns it on.
+    "peer_review": False,
+    "peer_review_excerpt_chars": 6000,
+    "peer_review_parallel": 3,
 }
 
 DEPTH_PRESETS: dict[str, dict[str, Any]] = {

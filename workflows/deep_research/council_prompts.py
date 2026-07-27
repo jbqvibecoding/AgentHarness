@@ -32,6 +32,56 @@ def build_member_prompt(question: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Peer review (anonymized cross-ranking among council members)
+# ---------------------------------------------------------------------------
+
+COUNCIL_PEER_REVIEW_SYSTEM = """You are a member of a model council serving as a peer reviewer. Several AI models answered the same question; you are shown the OTHER members' answers with authorship hidden (labelled A, B, C...). Your own answer is not among them.
+
+Judge each answer on these criteria, in this order of weight:
+1. Factual accuracy and quality of evidence — are claims correct and actually supported? Invented facts or sources are disqualifying.
+2. Responsiveness — does it answer the question that was actually asked, in full?
+3. Insight and depth — does it go beyond the obvious, engage trade-offs, and reason rather than assert?
+4. Honesty about uncertainty — does it mark what it does not know instead of bluffing?
+
+Critique FIRST, then rank — do not decide the order before you have evaluated each answer on its merits. Judge only the content: length, formatting, and confident tone are not quality. You cannot browse; judge from your own knowledge.
+
+Return ONLY a JSON object:
+{
+  "critiques": [
+    {"label": "A", "strengths": "what it does well", "weaknesses": "what it gets wrong or misses"}
+  ],
+  "ranking": ["B", "A"],
+  "top_reason": "why the top-ranked answer is best"
+}
+Include one critique entry per answer shown, and rank EVERY label exactly once, best first."""
+
+
+def build_peer_review_prompt(
+    question: str,
+    entries: list[dict[str, Any]],
+    mode: str,
+    excerpt_chars: int,
+) -> str:
+    """Peer-review user message: the question plus the labelled answers.
+
+    In deep mode the "answers" are full research papers, so each is cut to
+    ``excerpt_chars`` — reviewers judge on a substantial excerpt rather
+    than blowing up the context window.
+    """
+    parts = [f"Question the council answered:\n{question}\n"]
+    label = "research report excerpt" if mode == "deep" else "answer"
+    for entry in entries:
+        content = entry.get("content", "")
+        if len(content) > excerpt_chars:
+            content = content[:excerpt_chars] + "\n…[truncated]"
+        parts.append(f"===== Response {entry['label']} ({label}) =====\n{content}\n")
+    parts.append(
+        "Critique each response, then rank them. Output the JSON object only."
+    )
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Council analyst — the three comparison tables
 # ---------------------------------------------------------------------------
 
@@ -59,13 +109,46 @@ Return ONLY a JSON object:
 Aim for 4-8 agreements, 3-6 disagreements, and 2-6 unique rows when the material supports it; fewer is fine for thin material. Use member names EXACTLY as given."""
 
 
+def _peer_review_block(
+    peer_ranking: list[dict[str, Any]] | None,
+    peer_reviews: list[dict[str, Any]] | None,
+) -> str:
+    """Render the peer-review signal for the analyst/synthesizer prompts."""
+    if not peer_ranking:
+        return ""
+    lines = [
+        "\nPeer review — the members ranked each other's answers blind "
+        "(authorship hidden, self-votes excluded). Higher peer_score is "
+        "better:",
+        json.dumps(peer_ranking, ensure_ascii=False, default=str),
+    ]
+    reasons = [
+        f"- {r.get('evaluator')}: {r.get('top_reason', '')}"
+        for r in (peer_reviews or []) if r.get("top_reason")
+    ]
+    if reasons:
+        lines.append("Why each evaluator picked its top answer:")
+        lines.extend(reasons[:8])
+    return "\n".join(lines) + "\n"
+
+
 def build_analyst_prompt(
     question: str,
     member_blocks: list[dict[str, Any]],
     mode: str,
+    peer_ranking: list[dict[str, Any]] | None = None,
+    peer_reviews: list[dict[str, Any]] | None = None,
 ) -> str:
     """``member_blocks``: [{name, content, claim_table?}] per ok member."""
     parts = [f"Question the council worked on:\n{question}\n"]
+    peer_block = _peer_review_block(peer_ranking, peer_reviews)
+    if peer_block:
+        parts.append(
+            peer_block
+            + "Use the peers' critiques as extra signal for the disagreement "
+            "table — a weakness several members flagged is a real "
+            "disagreement, not a stylistic quibble.\n"
+        )
     kind = (
         "full research paper (with fact-check claim table)"
         if mode == "deep" else "direct answer"
@@ -118,6 +201,8 @@ def build_synth_prompt(
     council: dict[str, Any],
     member_blocks: list[dict[str, Any]],
     mode: str,
+    peer_ranking: list[dict[str, Any]] | None = None,
+    peer_reviews: list[dict[str, Any]] | None = None,
 ) -> str:
     parts = [
         f"Question:\n{question}\n",
@@ -125,6 +210,15 @@ def build_synth_prompt(
         + json.dumps(council, ensure_ascii=False, default=str)[:20_000],
         "",
     ]
+    peer_block = _peer_review_block(peer_ranking, peer_reviews)
+    if peer_block:
+        parts.append(
+            peer_block
+            + "Where members disagree, lean toward the position the council "
+            "rated higher — but only when its reasoning holds up; a "
+            "popular answer that is wrong is still wrong. Do not report "
+            "the ranking as fact about the models.\n"
+        )
     label = "paper excerpt" if mode == "deep" else "answer"
     for block in member_blocks:
         content = block.get("content", "")
@@ -138,6 +232,8 @@ def build_synth_prompt(
 __all__ = [
     "COUNCIL_ANALYST_SYSTEM",
     "COUNCIL_MEMBER_SYSTEM",
+    "COUNCIL_PEER_REVIEW_SYSTEM",
+    "build_peer_review_prompt",
     "COUNCIL_SYNTH_DEEP_SYSTEM",
     "COUNCIL_SYNTH_LIGHT_SYSTEM",
     "build_analyst_prompt",

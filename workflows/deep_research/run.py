@@ -81,6 +81,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Disable the evidence vault (sources are not stored/reused)",
     )
     parser.add_argument(
+        "--peer-review", action="store_true",
+        help=(
+            "Council pipelines: add an anonymized peer-review round where "
+            "members rank each other's answers blind (one extra LLM call "
+            "per member; off by default)"
+        ),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Validate registration + graph build; no LLM calls",
     )
@@ -103,6 +111,8 @@ def _dr_overrides(args: argparse.Namespace) -> dict[str, Any]:
         dr["max_revisions"] = args.max_revisions
     if args.max_parallel is not None:
         dr["max_parallel_subagents"] = args.max_parallel
+    if args.peer_review:
+        dr["peer_review"] = True
     if args.metadata_json:
         dr.update(json.loads(args.metadata_json))
     return dr
@@ -153,6 +163,7 @@ def _dry_run() -> int:
         normalize_council,
         render_council_html,
         render_markdown_tables,
+        render_ranking_table,
     )
     from workflows.deep_research.spec import DEEP_COUNCIL_RESEARCH_SPEC
     from workflows.deep_research.state import CouncilState
@@ -160,7 +171,8 @@ def _dry_run() -> int:
 
     for spec in (DEEP_COUNCIL_RESEARCH_SPEC, MODEL_COUNCIL_SPEC):
         cdag = DynamicGraphBuilder().build(spec, CouncilState)
-        assert len(cdag.nodes) == 2, f"{spec.pipeline_id}: bad node count"
+        assert len(cdag.nodes) == 3, f"{spec.pipeline_id}: bad node count"
+        assert "peer_review" in cdag.nodes, spec.pipeline_id
 
     names = ["Model A", "Model B"]
     sample = normalize_council({
@@ -179,6 +191,37 @@ def _dry_run() -> int:
     assert "Model B" in html_page and "✓" in html_page
     assert "<style>" in html_page  # self-contained: inline CSS only
     assert "src=" not in html_page and "href=" not in html_page
+
+    # Peer review: ballots are per-evaluator shuffled and self-excluded;
+    # aggregation is normalized Borda with deterministic tie-breaks.
+    import random as _random
+
+    from workflows.deep_research.peer_review import (
+        aggregate_rankings,
+        build_ballots,
+        parse_ballot,
+    )
+    _members = [
+        {"name": n, "slug": n.lower(), "status": "ok", "report": f"a{n}"}
+        for n in ("Alpha", "Beta", "Gamma")
+    ]
+    _ballots = build_ballots(_members, rng=_random.Random(0))
+    assert len(_ballots) == 3
+    for _b in _ballots:
+        assert _b["evaluator"] not in _b["label_to_member"].values()
+    assert parse_ballot("garbage", {"A": "Beta"})["valid"] is False
+    _agg = aggregate_rankings([
+        {"valid": True, "ranking": ["Beta", "Gamma"]},
+        {"valid": True, "ranking": ["Beta", "Alpha"]},
+    ])
+    assert _agg[0]["model"] == "Beta" and _agg[0]["peer_score"] == 1.0
+    _ranking_md = render_ranking_table(_agg, [])
+    assert "Peer Review Ranking" in _ranking_md and "Beta" in _ranking_md
+    assert render_ranking_table([], []) == ""  # no ranking → no empty shell
+    _html_pr = render_council_html(
+        sample, names, "q?", "light", peer_ranking=_agg, peer_reviews=[],
+    )
+    assert "Peer Review Ranking" in _html_pr and "src=" not in _html_pr
 
     reducers = extract_reducers(DeepResearchState)
     for field in REDUCED_LIST_FIELDS:
@@ -271,6 +314,8 @@ async def _execute(args: argparse.Namespace, out_dir: Path) -> dict[str, Any]:
             input_data.update({
                 "members": [],
                 "member_results": [],
+                "peer_reviews": [],
+                "peer_ranking": [],
                 "council": {},
                 "council_tables_md": "",
                 "synthesis": "",
@@ -320,6 +365,9 @@ def _write_council_artifacts(
     ]
     council = state.get("council") or {}
 
+    peer_ranking = state.get("peer_ranking") or []
+    peer_reviews = state.get("peer_reviews") or []
+
     council_json_path = out_dir / "council.json"
     council_json_path.write_text(
         json.dumps({
@@ -328,6 +376,8 @@ def _write_council_artifacts(
             "members": member_names,
             "synthesis": state.get("synthesis", ""),
             **council,
+            "peer_ranking": peer_ranking,
+            "peer_reviews": peer_reviews,
         }, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
@@ -337,6 +387,7 @@ def _write_council_artifacts(
         render_council_html(
             council, member_names,
             state.get("original_question", ""), mode,
+            peer_ranking=peer_ranking, peer_reviews=peer_reviews,
         ),
         encoding="utf-8",
     )
@@ -346,6 +397,8 @@ def _write_council_artifacts(
         "member_papers": member_papers,
         "council_json_path": str(council_json_path.resolve()),
         "council_html_path": str(council_html_path.resolve()),
+        "peer_review_enabled": bool(args.peer_review),
+        "peer_ranking": peer_ranking,
     }
 
 

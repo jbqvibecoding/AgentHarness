@@ -118,6 +118,41 @@ def degraded_council(
 # Markdown
 # ---------------------------------------------------------------------------
 
+def render_ranking_table(
+    peer_ranking: list[dict[str, Any]],
+    peer_reviews: list[dict[str, Any]] | None = None,
+) -> str:
+    """Fourth table: the anonymized peer-review leaderboard.
+
+    Returns "" when peer review did not run, so the report simply keeps
+    its three tables rather than showing an empty shell.
+    """
+    if not peer_ranking:
+        return ""
+    from workflows.deep_research.peer_review import peer_notes_by_model
+
+    notes = peer_notes_by_model(peer_reviews or [])
+    rows = [
+        "## Peer Review Ranking\n",
+        "| Model | Peer Score | Avg Rank | Ballots | What peers said |",
+        "|---|---|---|---|---|",
+    ]
+    for entry in peer_ranking:
+        model = str(entry.get("model", ""))
+        said = _md_escape(_cell(" ".join(notes.get(model, []))[:300], 300))
+        rows.append(
+            f"| {model} | {entry.get('peer_score', '')} | "
+            f"{entry.get('average_rank', '')} | "
+            f"{entry.get('ballots_counted', '')} | {said} |"
+        )
+    rows.append(
+        "\n*Scores come from council members ranking each other's answers "
+        "blind (authorship hidden, self-votes excluded). This is peer "
+        "opinion, not ground truth.*"
+    )
+    return "\n".join(rows)
+
+
 def render_markdown_tables(
     council: dict[str, Any], member_names: list[str],
 ) -> str:
@@ -208,6 +243,7 @@ th.model { text-align: center; white-space: nowrap; }
        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
        margin-left: 6px; white-space: nowrap; }
 .model-name { font-weight: 600; white-space: nowrap; }
+p.note { color: #6b7580; font-size: 12.5px; margin: 14px 0 0; font-style: italic; }
 """
 
 
@@ -222,6 +258,8 @@ def render_council_html(
     member_names: list[str],
     question: str,
     mode: str,
+    peer_ranking: list[dict[str, Any]] | None = None,
+    peer_reviews: list[dict[str, Any]] | None = None,
 ) -> str:
     esc = html.escape
     member_ths = "".join(
@@ -267,6 +305,33 @@ def render_council_html(
         for row in council.get("unique") or []
     ) or '<tr><td colspan="3">No unique single-model discoveries.</td></tr>'
 
+    # Fourth card only when peer review actually ran.
+    ranking_card = ""
+    if peer_ranking:
+        from workflows.deep_research.peer_review import peer_notes_by_model
+
+        notes = peer_notes_by_model(peer_reviews or [])
+        ranking_rows = "".join(
+            "<tr>"
+            f'<td class="model-name">{esc(str(r.get("model", "")))}</td>'
+            f'<td class="mark">{esc(str(r.get("peer_score", "")))}</td>'
+            f'<td class="mark">{esc(str(r.get("average_rank", "")))}</td>'
+            f'<td class="mark">{esc(str(r.get("ballots_counted", "")))}</td>'
+            f"<td>{esc(' '.join(notes.get(str(r.get('model', '')), []))[:300])}</td>"
+            "</tr>"
+            for r in peer_ranking
+        )
+        ranking_card = f"""
+<div class="card">
+<h2>Peer Review Ranking</h2>
+<table>
+<tr><th>Model</th><th class="model">Peer Score</th><th class="model">Avg Rank</th><th class="model">Ballots</th><th>What peers said</th></tr>
+{ranking_rows}
+</table>
+<p class="note">Council members ranked each other's answers blind — authorship hidden, self-votes excluded. Peer opinion, not ground truth.</p>
+</div>
+"""
+
     mode_label = (
         "Deep Council Research" if mode == "deep" else "Model Council"
     )
@@ -306,7 +371,7 @@ def render_council_html(
 {unique_rows}
 </table>
 </div>
-
+{ranking_card}
 </div>
 </body>
 </html>
@@ -318,4 +383,5 @@ __all__ = [
     "normalize_council",
     "render_council_html",
     "render_markdown_tables",
+    "render_ranking_table",
 ]

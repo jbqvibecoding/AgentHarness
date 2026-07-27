@@ -161,6 +161,13 @@ DEEP_COUNCIL_RESEARCH_SPEC = PipelineSpec(
             output_fields=["members", "member_results"],
         ),
         NodeDefinition(
+            node_id="peer_review",
+            role_id="dr_council_analyst",
+            node_function=f"{_NODES_PKG}.peer_review.peer_review_node",
+            display_label="Members reviewing each other's reports blind",
+            output_fields=["peer_reviews", "peer_ranking"],
+        ),
+        NodeDefinition(
             node_id="council_synthesis",
             role_id="dr_council_synthesizer",
             node_function=(
@@ -174,8 +181,9 @@ DEEP_COUNCIL_RESEARCH_SPEC = PipelineSpec(
     transitions=[
         TransitionSpec(
             from_phase="council_research_fanout",
-            to_phase="council_synthesis",
+            to_phase="peer_review",
         ),
+        TransitionSpec(from_phase="peer_review", to_phase="council_synthesis"),
         TransitionSpec(from_phase="council_synthesis", to_phase="__END__"),
     ],
 )

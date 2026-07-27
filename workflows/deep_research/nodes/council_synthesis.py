@@ -29,6 +29,7 @@ from workflows.deep_research.council_tables import (
     degraded_council,
     normalize_council,
     render_markdown_tables,
+    render_ranking_table,
 )
 from workflows.deep_research.nodes.common import profile_name
 from workflows.deep_research.profile import load_profile
@@ -118,6 +119,9 @@ async def council_synthesis_node(
     ]
     blocks = _member_blocks(member_results, mode)
     errors: list[str] = []
+    # Peer-review signal (empty when that stage is disabled or skipped).
+    peer_ranking = state.get("peer_ranking") or []
+    peer_reviews = state.get("peer_reviews") or []
 
     profile = load_profile(profile_name(state))
     llm = get_synthesizer_llm(profile)
@@ -129,7 +133,9 @@ async def council_synthesis_node(
             raw = await chat_with_retries(
                 llm,
                 system_prompt=COUNCIL_ANALYST_SYSTEM,
-                user_prompt=build_analyst_prompt(question, blocks, mode),
+                user_prompt=build_analyst_prompt(
+                    question, blocks, mode, peer_ranking, peer_reviews,
+                ),
                 timeout_s=900.0,
             )
             parsed = extract_json_block(raw)
@@ -147,6 +153,10 @@ async def council_synthesis_node(
     if council is None or not any(council.values()):
         council = degraded_council(member_results)
     tables_md = render_markdown_tables(council, member_names)
+    # Fourth table — only rendered when peer review actually ran.
+    ranking_md = render_ranking_table(peer_ranking, peer_reviews)
+    if ranking_md:
+        tables_md = f"{tables_md}\n\n{ranking_md}"
 
     # 2) Synthesizer — combined answer / executive synthesis.
     synth_system = (
@@ -157,7 +167,9 @@ async def council_synthesis_node(
         synthesis = await chat_with_retries(
             llm,
             system_prompt=synth_system,
-            user_prompt=build_synth_prompt(question, council, blocks, mode),
+            user_prompt=build_synth_prompt(
+                question, council, blocks, mode, peer_ranking, peer_reviews,
+            ),
             timeout_s=900.0,
         )
     except RuntimeError as exc:
