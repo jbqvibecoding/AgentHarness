@@ -33,6 +33,21 @@ class StreamDelta:
     content: str = ""
     reasoning_content: str = ""
     tool_call_deltas: list[dict[str, Any]] = field(default_factory=list)
+    # Terminal metadata. Providers send these late in the stream — usage on a
+    # separate ``choices=[]`` chunk (OpenAI ``include_usage``), finish_reason
+    # on the last content chunk. Carried here so the stream assembler can put
+    # them on the final ``LLMResponse``; without them a streamed call reports
+    # zero usage and ``finish_reason="length"`` is invisible to truncation and
+    # rollback observers.
+    usage: dict[str, int] = field(default_factory=dict)
+    finish_reason: str = ""
+    model: str = ""
+    # Vendor label of the leg serving this stream, stamped by
+    # ``LLMFallbackChain.stream``. Constant once the chain commits to an entry
+    # (failover only fires before the first yield); the stream assembler folds
+    # it into ``LLMResponse.response_metadata`` so per-call billing attribution
+    # works on the streaming path too.
+    provider: str = ""
 
 
 @runtime_checkable

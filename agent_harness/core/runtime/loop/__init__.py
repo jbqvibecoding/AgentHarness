@@ -36,6 +36,14 @@ from agent_harness.core.runtime.loop.tool_call_parser import (
     ToolCallParser,
     extract_leaked_reasoning,
 )
+from agent_harness.core.runtime.loop.message_trimmer import (
+    MessageTrimmer,
+    NullTrimmer,
+    TaskBoundary,
+    TaskBoundaryTrimmer,
+    find_final_assistant,
+    trim_and_remap_boundaries,
+)
 from agent_harness.core.runtime.loop.tool_exec import (
     DefaultToolResultPostProcessor,
     ToolResultPostProcessor,
@@ -52,9 +60,12 @@ __all__ = [
     "normalize_execution_context",
     "reset_current_execution_scope",
     "set_current_execution_scope",
+    "MessageTrimmer",
     "NullTrimmer",
-    "KeepRecentTrimmer",
+    "TaskBoundary",
     "TaskBoundaryTrimmer",
+    "find_final_assistant",
+    "trim_and_remap_boundaries",
     "ModelProfile",
     "HistoryPolicy",
     "ThinkingResult",

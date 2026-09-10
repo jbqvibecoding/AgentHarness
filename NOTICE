@@ -1,0 +1,46 @@
+AgentHarness
+Copyright the AgentHarness authors.
+
+This product includes software developed as part of the following projects.
+
+--------------------------------------------------------------------------
+FrontierAgent (Apodex)
+https://github.com/ApodexAI/FrontierAgent
+Licensed under the Apache License, Version 2.0.
+
+FrontierAgent and AgentHarness share a common lineage, so the modules below
+are ported with the package name rewritten from ``frontier_agent`` to
+``agent_harness`` and are otherwise substantially unmodified. Each ported
+file carries a header comment naming its original path.
+
+  agent_harness/infra/usage_meter.py
+  agent_harness/infra/retriable.py
+  agent_harness/infra/prompt_cache.py
+  agent_harness/infra/llm/fallback.py
+  agent_harness/core/runtime/loop/message_trimmer.py
+  agent_harness/core/runtime/loop/context_budget.py   (truncate_text_to_tokens only)
+  agent_harness/models/task_budget.py
+  agent_harness/models/agent_message.py
+  agent_harness/utils/language.py
+  agent_harness/components/agent_bus/**
+  agent_harness/components/finalization/**
+  agent_harness/components/observers/**               (several; see file headers)
+  agent_harness/components/middleware/llm/stream_repetition.py
+  agent_harness/components/task_board_types.py
+  agent_harness/scheduling/workflow_defaults.py
+  workflows/_shared/**
+  plugins/tools/**                                    (several; see file headers)
+
+--------------------------------------------------------------------------
+DeerFlow
+https://github.com/bytedance/deer-flow
+Licensed under the MIT License.
+
+No DeerFlow source code is included. The following modules re-implement
+designs described by DeerFlow's documentation and source, and say so in
+their module docstrings:
+
+  workflows/deep_research/stop_reason.py            (additive stop_reason
+                                                     guard protocol)
+  workflows/deep_research/observers/tool_progress.py (no-new-information
+                                                     stagnation guard)
