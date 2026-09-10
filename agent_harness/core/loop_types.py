@@ -18,10 +18,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Wall-clock deadline channel
+# ---------------------------------------------------------------------------
+
+#: ExecutionScope metadata key holding this run's soft deadline, as either a
+#: ``time.monotonic()`` value or a renewable lease. Observers read it through
+#: :func:`wall_deadline_remaining_s` so a workflow can stop gracefully before
+#: a hard cancellation, instead of losing its work to one.
+WALL_DEADLINE_MONOTONIC_KEY = "wall_deadline_monotonic"
+
+
+def wall_deadline_remaining_s() -> float | None:
+    """Seconds until the soft deadline, or ``None`` when none is set."""
+    from agent_harness.core.execution_context import get_current_execution_scope
+    from agent_harness.infra.wall_time_lease import RenewableWallTimeDeadline
+
+    scope = get_current_execution_scope()
+    if scope is None:
+        return None
+    deadline = (scope.metadata or {}).get(WALL_DEADLINE_MONOTONIC_KEY)
+    if isinstance(deadline, RenewableWallTimeDeadline):
+        try:
+            return float(deadline.remaining_s())
+        except Exception:  # noqa: BLE001 — a broken lease is "no deadline"
+            return None
+    if not isinstance(deadline, (int, float)):
+        return None
+    return float(deadline) - time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +489,8 @@ async def notify_tool_result(
 
 
 __all__ = [
+    "WALL_DEADLINE_MONOTONIC_KEY",
+    "wall_deadline_remaining_s",
     "AgentLoopResult",
     "BaseObserver",
     "Intervention",

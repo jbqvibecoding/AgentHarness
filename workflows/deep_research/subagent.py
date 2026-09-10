@@ -19,8 +19,16 @@ import logging
 import re
 from typing import Any, Awaitable, Sequence
 
+from agent_harness.components.observers.duplicate_query_rollback import (
+    DuplicateQueryRollbackObserver,
+)
 from agent_harness.components.observers.leaked_tool_call_retry import (
     LeakedToolCallRetryObserver,
+)
+from agent_harness.components.observers.repetition_guard import RepetitionGuard
+from agent_harness.components.observers.stuck_target_guard import StuckTargetGuard
+from agent_harness.components.observers.text_repetition_guard import (
+    TextRepetitionGuard,
 )
 from agent_harness.core.loop_types import (
     AgentLoopResult,
@@ -32,9 +40,7 @@ from agent_harness.core.runtime import registry
 from agent_harness.core.runtime.loop.agent_loop import run_agent_loop
 from agent_harness.core.runtime.resources.manager import ResourceManager
 
-from workflows.react_base.observers.duplicate_query_rollback import (
-    DuplicateQueryRollbackObserver,
-)
+from workflows.deep_research.observers.tool_progress import ToolProgressGuard
 from workflows.react_base.observers.empty_search_rollback import (
     EmptySearchRollbackObserver,
 )
@@ -84,13 +90,26 @@ def _strip_leaked_tool_calls(text: str) -> str:
     return _LEAKED_TAG_FRAGMENT_RE.sub("", out).strip()
 
 
-def _build_observers(tool_names: list[str]) -> list[Any]:
+def _build_observers(tool_names: list[str], run_id: str) -> list[Any]:
+    """The guard stack every research branch runs under.
+
+    The four repetition/refusal guards watch the *call pattern*;
+    ``ToolProgressGuard`` watches the *results*, which is a different
+    failure — a researcher issuing genuinely varied searches that all come
+    back with the same material is stuck too, and no call-pattern guard
+    sees it. ``TextRepetitionGuard`` covers the third shape: prose that
+    starts looping regardless of what the tools return.
+    """
     return [
         ToolCallArgsNormalizer(),
         LeakedToolCallRetryObserver(tool_names=tool_names),
         DuplicateQueryRollbackObserver(),
         RefusalRollbackObserver(),
         EmptySearchRollbackObserver(),
+        RepetitionGuard(),
+        TextRepetitionGuard(),
+        StuckTargetGuard(),
+        ToolProgressGuard(run_id=run_id),
     ]
 
 
@@ -235,10 +254,10 @@ async def run_subagent(
         max_completion_tokens=16_384,
     )
 
-    observers = _build_observers(tool_names)
     # One run id per branch so guards keyed on it never collide between
     # sibling branches sharing a task_id.
     run_id = f"{task_id}:{role_id}:{id(config):x}"
+    observers = _build_observers(tool_names, run_id)
     budget_obs = _budget_observer(
         task_id=task_id, role_id=role_id, run_id=run_id, state=state,
     )

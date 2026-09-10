@@ -74,8 +74,9 @@ def load_profile(name: str) -> dict[str, Any]:
 
 def _build_client(cfg: dict[str, Any]) -> LLMClient:
     from agent_harness.infra.openai_client import OpenAIClient
+    from agent_harness.infra.prompt_cache import maybe_wrap_for_prompt_cache
 
-    return OpenAIClient(
+    client = OpenAIClient(
         model=cfg["model"],
         api_key=cfg.get("api_key") or "dummy",
         base_url=cfg.get("base_url"),
@@ -85,6 +86,13 @@ def _build_client(cfg: dict[str, Any]) -> LLMClient:
             "HTTP-Referer": "agent_harness",
             "X-Title": "AgentHarness-DeepResearch",
         },
+    )
+    # Claude-family upstreams bill a re-sent system prompt every turn. A
+    # research sub-agent replays the same long role prompt across a dozen
+    # turns, so marking it cacheable is a pure saving. No-op on every other
+    # provider, so this needs no gating at the call site.
+    return maybe_wrap_for_prompt_cache(
+        client, provider=str(cfg.get("provider") or ""), model=str(cfg["model"]),
     )
 
 

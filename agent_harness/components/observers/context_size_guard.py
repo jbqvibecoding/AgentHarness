@@ -52,7 +52,13 @@ class ContextSizeGuard(BaseObserver):
     async def on_llm_response(self, ctx: TurnContext) -> Intervention | None:
         if self._tripped or ctx.usage is None:
             return None
-        used = int(ctx.usage.get("input_tokens", 0))
+        # OpenAI-compatible endpoints report ``prompt_tokens``; the
+        # Anthropic-shaped path reports ``input_tokens``. Reading only the
+        # latter meant this guard saw 0 on the former and never tripped at
+        # all — the failure it exists to pre-empt went unguarded.
+        used = int(
+            ctx.usage.get("prompt_tokens") or ctx.usage.get("input_tokens") or 0,
+        )
         if used <= self._limit:
             return None
         self._tripped = True
