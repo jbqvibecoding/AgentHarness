@@ -13,8 +13,13 @@ from typing import Any
 
 from agent_harness.models.node_context import NodeContext
 
+from workflows._shared.citation_contract import (
+    compose_citation_contract,
+    strip_references_section_from_prompt,
+)
 from workflows.deep_research.citations import citation_listing, normalize_url
 from workflows.deep_research.config import get_cfg
+from workflows.deep_research.references import references_from_mapping
 from workflows.deep_research.hyper_prompts import (
     PATCH_REVISE_SYSTEM,
     build_patch_revise_prompt,
@@ -32,6 +37,36 @@ logger = logging.getLogger(__name__)
 
 _EVIDENCE_BUDGETS = (120_000, 80_000, 50_000)
 _CONTEXT_ERR_MARKERS = ("longer than the model", "context length", "maximum context")
+
+# The one WRITER_SYSTEM bullet that tells the model to author its own
+# References section. Under the citation contract the system appends the
+# canonical block instead, and leaving both instructions in place is what
+# produces two reference lists — one of them mis-numbered.
+_OWN_REFERENCES_BULLET = (
+    '- End with a "## References" section listing each cited number once, '
+    'sequentially without gaps, as "[n] Title: URL".\n'
+)
+
+
+def _writer_system(state: dict[str, Any]) -> str:
+    """WRITER_SYSTEM with the deterministic citation contract applied.
+
+    Returns the prompt unchanged when the contract is disabled or when the
+    run produced no citable sources — telling a model to "use one of these
+    indices" with an empty index list makes it either refuse to cite or
+    invent indices.
+    """
+    system = with_date(WRITER_SYSTEM, today())
+    if not bool(get_cfg(state, "citation_contract")):
+        return system
+    references = references_from_mapping(state.get("citation_mapping") or {})
+    contract = compose_citation_contract(references)
+    if not contract:
+        return system
+    system = system.replace(_OWN_REFERENCES_BULLET, "")
+    # Defence in depth for the heading-shaped form the shared helper knows.
+    system = strip_references_section_from_prompt(system)
+    return system + contract
 
 
 def _citation_nums_for(card: dict[str, Any], url_to_num: dict[str, int]) -> str:
@@ -139,7 +174,7 @@ async def draft_node(state: dict[str, Any], ctx: NodeContext) -> dict[str, Any]:
             return patched
 
     listing = citation_listing(state.get("citation_mapping") or {})
-    system = with_date(WRITER_SYSTEM, today())
+    system = _writer_system(state)
 
     last_exc: Exception | None = None
     for budget in _EVIDENCE_BUDGETS:

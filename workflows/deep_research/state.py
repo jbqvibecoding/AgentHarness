@@ -81,6 +81,13 @@ class DeepResearchState(TypedDict, total=False):
     review_feedback: list[dict[str, Any]]
     revision_count: int
 
+    # citation integrity (``citation_audit`` node). ``references`` is the
+    # ``[{url, title}]`` whitelist in citation order — list position ``i``
+    # is ``[i + 1]``. Both audit dicts are summaries, replaced wholesale.
+    references: list[dict[str, str]]
+    citation_audit: dict[str, Any]
+    numeric_grounding: dict[str, Any]
+
     # terminal output — the Scheduler requires non-empty ``report`` or
     # ``final_content`` in the final state.
     verification_summary: str

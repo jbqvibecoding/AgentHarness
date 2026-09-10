@@ -136,8 +136,14 @@ def _dry_run() -> int:
     dag = DynamicGraphBuilder().build(DEEP_RESEARCH_SPEC, DeepResearchState)
     node_ids = {n.node_id for n in DEEP_RESEARCH_SPEC.resolved_nodes}
     assert DEEP_RESEARCH_SPEC.entry_point in node_ids
-    assert len(dag.nodes) == 8, f"expected 8 nodes, got {len(dag.nodes)}"
+    assert len(dag.nodes) == 9, f"expected 9 nodes, got {len(dag.nodes)}"
     assert "polish" in node_ids and DEEP_RESEARCH_SPEC.resolved_terminal_nodes == ["polish"]
+    # The citation audit must sit between the verifier and the terminal
+    # node — before polish so its Verification appendix gets cleaned too,
+    # after final_verify so it audits the report that actually ships.
+    assert "citation_audit" in dag.nodes
+    assert dag.edges.get("final_verify") == "citation_audit"
+    assert dag.edges.get("citation_audit") == "polish"
 
     # hyperresearch patch/citation engine sanity (pure functions, no LLM).
     from workflows.deep_research.patch import (
@@ -250,10 +256,56 @@ def _dry_run() -> int:
         "review_verdict": "approve", "revision_count": 0, "metadata": meta,
     }) == "final_verify"
 
+    # Citation-integrity engine (pure functions, no LLM): the whitelist
+    # binding, orphan detection, and the numeric audit that separates a
+    # supported figure from a fabricated one carrying a valid citation.
+    from workflows._shared.cited_report_finalizer import (
+        validate_citation_body,
+        validate_numeric_grounding,
+    )
+    from workflows._shared.citation_contract import (
+        compose_citation_contract,
+        finalize_report_with_canonical_references,
+    )
+    from workflows.deep_research.references import (
+        mapping_from_references,
+        references_from_mapping,
+        renumbered_references,
+        snippet_lookup_for,
+    )
+
+    _map = {
+        "1": {"url": "https://a.example/r", "title": "A"},
+        "2": {"url": "https://b.example/r", "title": "B"},
+    }
+    _refs = references_from_mapping(_map)
+    assert mapping_from_references(_refs) == _map
+    assert compose_citation_contract([]) == ""
+    assert "[2]" in compose_citation_contract(_refs)
+    assert validate_citation_body("x [9]", max_ref=2, valid_indices=[1, 2])
+    assert validate_citation_body("x [1]", max_ref=2, valid_indices=[1, 2]) == []
+    _cards = [{
+        "card_id": "E1", "claim": "", "quote": "Revenue was $5 billion.",
+        "sources": [{"url": "https://a.example/r"}],
+    }]
+    _audit = validate_numeric_grounding(
+        "Revenue was $5 billion [1]. Costs were $9.9 billion [2].",
+        snippet_lookup=snippet_lookup_for(_refs, _cards),
+    )
+    assert [t for t, _ in _audit.suspect] == ["$9.9 billion"], _audit.suspect
+    _body = "Second first [2], then first [1]."
+    assert [r["url"] for r in renumbered_references(_body, _refs)] == [
+        "https://b.example/r", "https://a.example/r",
+    ]
+    assert "[1] B" in finalize_report_with_canonical_references(
+        _body, references=_refs,
+    )
+
     print(
-        "deep_research dry-run OK: 3 pipelines build (deep_research=8 nodes), "
-        "reducers wired, routing sane, council renderers sane, "
-        "patch/citation engine sane",
+        f"deep_research dry-run OK: 3 pipelines build "
+        f"(deep_research={len(dag.nodes)} nodes), reducers wired, routing "
+        f"sane, council renderers sane, patch/citation engine sane, "
+        f"citation contract + numeric audit sane",
     )
     return 0
 
@@ -426,6 +478,28 @@ def _write_enhancement_artifacts(
         fields["vault_source_count"] = (
             len(list(notes.glob("*.md"))) if notes.exists() else 0
         )
+    audit = state.get("citation_audit") or {}
+    numeric = state.get("numeric_grounding") or {}
+    if audit or numeric:
+        p = out_dir / "citation-audit.json"
+        p.write_text(
+            json.dumps(
+                {"citation_audit": audit, "numeric_grounding": numeric},
+                ensure_ascii=False, indent=2,
+            ),
+            encoding="utf-8",
+        )
+        fields["citation_audit_path"] = str(p.resolve())
+        # Keep result.json itself to a scannable summary — the full token
+        # lists live in the artifact above.
+        fields["citation_audit"] = {
+            "reference_count": audit.get("reference_count", 0),
+            "issue_count": len(audit.get("issues") or []),
+            "repaired": bool(audit.get("repaired")),
+            "numbers_checked": numeric.get("total", 0),
+            "numbers_suspect": numeric.get("suspect", 0),
+            "suspect_ratio": numeric.get("suspect_ratio", 0.0),
+        }
     return fields
 
 

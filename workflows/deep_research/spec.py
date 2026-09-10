@@ -5,7 +5,7 @@ Multi-agent deep research with internal checks and balances:
     plan → research_fanout → fact_check → conflict_check
         ├─(gaps & iterations left)→ research_fanout   (re-research loop)
         └─→ draft → review ─┬─(revise & budget left)→ draft   (revision loop)
-                            └─→ final_verify → END
+                            └─→ final_verify → citation_audit → polish → END
 
 Parallelism happens INSIDE ``research_fanout`` / ``fact_check`` via
 ``asyncio.gather`` over reentrant ``run_agent_loop`` sub-agents — MiniDAG
@@ -100,6 +100,16 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
             output_fields=["report", "final_content", "verification_summary"],
         ),
         NodeDefinition(
+            node_id="citation_audit",
+            role_id="dr_verifier",
+            node_function=f"{_NODES_PKG}.citation_audit.citation_audit_node",
+            display_label="Auditing citations and figures",
+            output_fields=[
+                "report", "final_content", "references",
+                "citation_audit", "numeric_grounding", "citation_mapping",
+            ],
+        ),
+        NodeDefinition(
             node_id="polish",
             role_id="dr_reviewer",
             node_function=f"{_NODES_PKG}.polish.polish_node",
@@ -126,7 +136,8 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
             condition=f"{_CONDITIONS}.route_after_review",
         ),
         TransitionSpec(from_phase="review", to_phase="final_verify"),
-        TransitionSpec(from_phase="final_verify", to_phase="polish"),
+        TransitionSpec(from_phase="final_verify", to_phase="citation_audit"),
+        TransitionSpec(from_phase="citation_audit", to_phase="polish"),
         TransitionSpec(from_phase="polish", to_phase="__END__"),
     ],
 )

@@ -43,6 +43,17 @@ _DEFAULTS: dict[str, Any] = {
     "peer_review": False,
     "peer_review_excerpt_chars": 6000,
     "peer_review_parallel": 3,
+    # Citation integrity (FrontierAgent's deterministic citation contract).
+    # ``citation_contract`` pins the writer to a numbered whitelist and
+    # makes the system, not the model, render the References block.
+    # ``numeric_grounding`` additionally classifies every specific number
+    # in the report against the text behind its citation.
+    # ``citation_repair_rounds`` is the repair budget: one round of
+    # marker-only repair, then whatever remains is disclosed in the
+    # report's Verification appendix rather than blocking delivery.
+    "citation_contract": True,
+    "numeric_grounding": True,
+    "citation_repair_rounds": 1,
 }
 
 DEPTH_PRESETS: dict[str, dict[str, Any]] = {
@@ -60,6 +71,9 @@ DEPTH_PRESETS: dict[str, dict[str, Any]] = {
         "num_critics": 1,
         "patch_revision": False,
         "enable_polish": False,
+        # The contract itself is free (prompt-only) so it stays on, but
+        # the repair round costs an LLM call — quick discloses instead.
+        "citation_repair_rounds": 0,
     },
     "standard": {},
     "deep": {
