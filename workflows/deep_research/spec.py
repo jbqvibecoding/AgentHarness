@@ -51,7 +51,7 @@ DEEP_RESEARCH_SPEC = PipelineSpec(
         NodeDefinition(
             node_id="research_fanout",
             role_id="dr_researcher",
-            node_function=f"{_NODES_PKG}.research.research_fanout_node",
+            node_function=f"{_NODES_PKG}.research.research_node",
             display_label="Researching sub-questions in parallel",
             output_fields=["evidence_cards", "research_notes"],
         ),

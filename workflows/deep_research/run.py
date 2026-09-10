@@ -301,11 +301,33 @@ def _dry_run() -> int:
         _body, references=_refs,
     )
 
+    # Swarm mode: the coordinator subsystem imports, the role is gated to
+    # orchestration tools, and both modes resolve through one dispatcher.
+    from agent_harness.components.agent_bus import AgentBus
+    from workflows.deep_research.agents import COORDINATOR_DEF
+    from workflows.deep_research.nodes.research import research_node
+    from workflows.deep_research.nodes.research_swarm import (
+        _sq_id_from_session,
+    )
+
+    assert AgentBus() is not None
+    assert "web_search" not in COORDINATOR_DEF.allowed_tools
+    assert "create_subagent" in COORDINATOR_DEF.allowed_tools
+    assert callable(research_node)
+    assert _sq_id_from_session("sq2_market-size", {"sq2"}) == "sq2"
+    assert _sq_id_from_session("sq10_x", {"sq1"}) == ""
+    from workflows.deep_research.config import get_cfg as _cfg
+
+    assert _cfg({"metadata": {}}, "research_mode") == "fanout"
+    assert _cfg(
+        {"metadata": {"deep_research": {"depth": "deep"}}}, "research_mode",
+    ) == "swarm"
+
     print(
         f"deep_research dry-run OK: 3 pipelines build "
         f"(deep_research={len(dag.nodes)} nodes), reducers wired, routing "
         f"sane, council renderers sane, patch/citation engine sane, "
-        f"citation contract + numeric audit sane",
+        f"citation contract + numeric audit sane, swarm mode wired",
     )
     return 0
 

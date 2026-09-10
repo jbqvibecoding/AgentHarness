@@ -29,6 +29,31 @@ _CURRENT_SCOPE: ContextVar[ExecutionScope | None] = ContextVar(
 )
 
 
+# Tool-call identity for the call running in THIS asyncio Task.
+# ``asyncio.gather`` gives each coroutine its own copy of the context, so
+# parallel tool calls each see their own id rather than racing on a shared
+# one. Tools that spawn or address sub-agents use it to tie a spawned
+# session back to the call that created it.
+_CURRENT_TOOL_CALL_ID: ContextVar[str] = ContextVar(
+    "agent_harness_current_tool_call_id", default="",
+)
+
+
+def set_current_tool_call_id(tool_call_id: str) -> Token:
+    """Stash the active tool_call_id on this asyncio Task's context."""
+    return _CURRENT_TOOL_CALL_ID.set(tool_call_id)
+
+
+def get_current_tool_call_id() -> str:
+    """The active tool_call_id, or ``""`` outside tool execution."""
+    return _CURRENT_TOOL_CALL_ID.get()
+
+
+def reset_current_tool_call_id(token: Token) -> None:
+    """Restore the prior tool_call_id contextvar value."""
+    _CURRENT_TOOL_CALL_ID.reset(token)
+
+
 def normalize_execution_context(value: Any) -> dict[str, Any]:
     """Return a mutable execution-context dict."""
     if isinstance(value, dict):

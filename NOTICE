@@ -23,13 +23,24 @@ file carries a header comment naming its original path.
   agent_harness/models/agent_message.py
   agent_harness/utils/language.py
   agent_harness/components/agent_bus/**
+  agent_harness/components/task_board_types.py
   agent_harness/components/finalization/**
+  agent_harness/models/event.py
+  agent_harness/infra/wall_time_lease.py
   agent_harness/components/observers/**               (several; see file headers)
   agent_harness/components/middleware/llm/stream_repetition.py
-  agent_harness/components/task_board_types.py
   agent_harness/scheduling/workflow_defaults.py
   workflows/_shared/**
+  workflows/deep_research/observers/{auto_fan_in,unassigned_nudge,
+      no_progress_guard,planning_gate,bare_text_finalize}.py
   plugins/tools/**                                    (several; see file headers)
+
+Small excerpts inlined rather than importing their original module:
+  plugins/tools/_bounded_fetch.py  (_validate_public_url, from
+      plugins/tools/_download_runner.py)
+  agent_harness/core/runtime/loop/context_budget.py  (truncate_text_to_tokens)
+  workflows/deep_research/subagent.py  (leaked tool-call scrubbing regexes,
+      from workflows/stateful_react_agent/_runtime.py)
 
 --------------------------------------------------------------------------
 DeerFlow

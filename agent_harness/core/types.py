@@ -9,22 +9,31 @@ from uuid import uuid4
 # ── Identity types ──────────────────────────────────────────────────────────
 
 TaskId = NewType("TaskId", str)
+EventId = NewType("EventId", str)
+SessionId = NewType("SessionId", str)
+AgentSessionId = NewType("AgentSessionId", str)  # 12-char hex
+PromptId = NewType("PromptId", str)
+StepId = NewType("StepId", str)
+# Free-form agent role identifier, resolved through AgentRegistry at
+# runtime. Workflows register the concrete roles they need; the kernel
+# stays role-agnostic.
+AgentRoleId = NewType("AgentRoleId", str)
 
 
 def new_task_id() -> TaskId:
     return TaskId(uuid4().hex[:12])
 
 
-def new_session_id() -> str:
-    return uuid4().hex[:12]
+def new_session_id() -> SessionId:
+    return SessionId(uuid4().hex[:12])
 
 
-def new_prompt_id() -> str:
-    return uuid4().hex[:12]
+def new_prompt_id() -> PromptId:
+    return PromptId(uuid4().hex[:12])
 
 
-def new_step_id() -> str:
-    return uuid4().hex[:10]
+def new_step_id() -> StepId:
+    return StepId(uuid4().hex[:10])
 
 
 # ── Enumerations ────────────────────────────────────────────────────────────

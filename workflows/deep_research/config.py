@@ -60,6 +60,14 @@ _DEFAULTS: dict[str, Any] = {
     # researcher cannot drain the pool before its siblings spend anything.
     "max_run_tokens": 2_000_000,
     "budget_warn_ratio": 0.8,
+    # How the research node gathers evidence.
+    #   "fanout" — one researcher per pending sub-question (predictable,
+    #              cheapest, and what every earlier run used).
+    #   "swarm"  — a coordinator opens and assigns researchers itself, so
+    #              effort follows what the question turns out to need.
+    # The seven-role DAG is identical either way; only this node changes.
+    "research_mode": "fanout",
+    "coordinator_max_turns": 30,
 }
 
 DEPTH_PRESETS: dict[str, dict[str, Any]] = {
@@ -94,6 +102,10 @@ DEPTH_PRESETS: dict[str, dict[str, Any]] = {
         "verifier_spot_check": True,
         "loci_max": 6,
         "max_run_tokens": 6_000_000,
+        # Deep runs are where a fixed one-per-sub-question fan-out is most
+        # obviously wrong: the questions are broad enough that effort
+        # genuinely should be uneven.
+        "research_mode": "swarm",
     },
 }
 

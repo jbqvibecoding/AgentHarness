@@ -116,6 +116,26 @@ def _parse_evidence(
     return cards
 
 
+async def research_node(
+    state: dict[str, Any], ctx: NodeContext,
+) -> dict[str, Any]:
+    """Dispatch to the configured research mode.
+
+    The spec points at this function so the mode is a config knob rather
+    than a second node: both modes have the same input and output contract,
+    and everything downstream — the conflict audit, its re-research loop,
+    the writer — is written against that contract, not against how the
+    evidence was gathered.
+    """
+    if str(get_cfg(state, "research_mode")).lower() == "swarm":
+        from workflows.deep_research.nodes.research_swarm import (
+            research_swarm_node,
+        )
+
+        return await research_swarm_node(state, ctx)
+    return await research_fanout_node(state, ctx)
+
+
 async def research_fanout_node(
     state: dict[str, Any], ctx: NodeContext,
 ) -> dict[str, Any]:
@@ -259,4 +279,4 @@ async def research_fanout_node(
     }
 
 
-__all__ = ["research_fanout_node"]
+__all__ = ["research_fanout_node", "research_node"]

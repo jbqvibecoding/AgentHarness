@@ -84,6 +84,33 @@ class NodeExecutionPolicy(BaseModel):
     )
 
 
+class SubAgentProfile(BaseModel):
+    """Named template for sub-agents a node may spawn.
+
+    Declaring these on the node rather than hard-coding them in the node
+    function lets a workflow describe its fan-out shape declaratively —
+    and lets ``SpawnGuard`` size each sub-agent's slice of the parent's
+    remaining budget before anything is spawned.
+    """
+
+    role_id: str = Field(
+        ...,
+        description="Agent role -> AgentDefinition (prompt, tools, model)",
+    )
+    context_policy: ContextPolicy = Field(default_factory=ContextPolicy)
+    max_turns: int = Field(
+        default=8,
+        description="Max ReAct turns for this sub-agent",
+    )
+    budget_fraction: float = Field(
+        default=0.1,
+        description=(
+            "Fraction of the parent node's remaining budget allocated "
+            "to this sub-agent"
+        ),
+    )
+
+
 class NodeDefinition(BaseModel):
     """Declares a node's identity, behavior, and context requirements."""
 
@@ -121,6 +148,13 @@ class NodeDefinition(BaseModel):
         ),
     )
     output_fields: list[str] = Field(default_factory=list)
+    sub_agent_profiles: dict[str, SubAgentProfile] = Field(
+        default_factory=dict,
+        description=(
+            "Sub-agent templates this node may spawn, keyed by name. "
+            "Empty for nodes that do their own work."
+        ),
+    )
     display_label: str = Field(
         default="",
         description=(

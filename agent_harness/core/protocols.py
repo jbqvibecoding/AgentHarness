@@ -14,7 +14,45 @@ from __future__ import annotations
 import time
 from abc import ABC
 from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class EventSink(Protocol):
+    """Append-only event writer. Structural so any store can satisfy it."""
+
+    async def append(
+        self,
+        task_id: Any = "",
+        event_type: Any = None,
+        payload: dict[str, Any] | None = None,
+        agent_role: str = "system",
+    ) -> Any: ...
+
+    def replay(self, task_id: str) -> AsyncIterator[Any]: ...
+
+
+@runtime_checkable
+class EventReader(Protocol):
+    """Query side of the event store, including per-agent inboxes."""
+
+    async def get_events(
+        self,
+        task_id: Any,
+        event_type: Any = None,
+        after_id: int = 0,
+        limit: int | None = None,
+    ) -> list[Any]: ...
+
+    async def get_events_for_agent(
+        self,
+        to_agent: str,
+        after_id: int = 0,
+        limit: int = 50,
+        *,
+        task_id: str | Any | None = None,
+    ) -> list[Any]: ...
 
 
 @dataclass

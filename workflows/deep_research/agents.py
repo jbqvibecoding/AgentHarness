@@ -109,6 +109,24 @@ COUNCIL_SYNTH_DEF = AgentDefinition(
     description="Merges member-model outputs into one combined answer/synthesis.",
 )
 
+COORDINATOR_DEF = AgentDefinition(
+    role_id="dr_coordinator",
+    display_name="Research Coordinator",
+    system_prompt="",  # composed per run by nodes/research_swarm.py
+    # Orchestration only: the coordinator must not research itself, or it
+    # spends its turns searching instead of shaping the team. Withholding
+    # the web tools is what enforces that.
+    allowed_tools=[
+        "create_subagent", "assign_task", "collect_reports",
+        "stop_subagent", "add_task", "update_task",
+    ],
+    color="#0ea5e9",
+    icon="users",
+    description=(
+        "Opens and assigns researcher sub-agents dynamically in swarm mode."
+    ),
+)
+
 COUNCIL_AGENT_DEFS: list[AgentDefinition] = [
     COUNCIL_ANALYST_DEF,
     COUNCIL_SYNTH_DEF,
@@ -117,6 +135,7 @@ COUNCIL_AGENT_DEFS: list[AgentDefinition] = [
 ALL_AGENT_DEFS: list[AgentDefinition] = [
     PLANNER_DEF,
     RESEARCHER_DEF,
+    COORDINATOR_DEF,
     FACT_CHECKER_DEF,
     CONFLICT_CHECKER_DEF,
     WRITER_DEF,
@@ -129,6 +148,7 @@ __all__ = [
     "COUNCIL_AGENT_DEFS",
     "COUNCIL_ANALYST_DEF",
     "COUNCIL_SYNTH_DEF",
+    "COORDINATOR_DEF",
     "PLANNER_DEF",
     "RESEARCHER_DEF",
     "FACT_CHECKER_DEF",
