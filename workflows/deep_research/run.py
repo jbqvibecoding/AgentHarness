@@ -457,7 +457,9 @@ def _write_council_artifacts(
 def _write_enhancement_artifacts(
     out_dir: Path, state: dict[str, Any],
 ) -> dict[str, Any]:
-    """Write patch-log / polish-log / vault stats; return result.json fields."""
+    """Write patch-log / polish-log / vault / budget stats; return result fields."""
+    from workflows.deep_research.budget import release_run_budget
+
     fields: dict[str, Any] = {}
     patch_log = state.get("patch_log") or []
     if patch_log:
@@ -478,6 +480,19 @@ def _write_enhancement_artifacts(
         fields["vault_source_count"] = (
             len(list(notes.glob("*.md"))) if notes.exists() else 0
         )
+    budget = release_run_budget(str(state.get("task_id") or ""))
+    if budget:
+        fields["token_budget"] = budget
+    capped = [
+        {
+            "sub_question_id": note.get("sub_question_id"),
+            "stop_reason": note.get("stop_reason"),
+        }
+        for note in state.get("research_notes") or []
+        if note.get("stop_reason")
+    ]
+    if capped:
+        fields["capped_branches"] = capped
     audit = state.get("citation_audit") or {}
     numeric = state.get("numeric_grounding") or {}
     if audit or numeric:

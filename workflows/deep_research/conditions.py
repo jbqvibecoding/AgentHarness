@@ -16,12 +16,35 @@ from typing import Any
 from workflows.deep_research.config import get_cfg
 
 
+def _budget_spent(state: dict[str, Any]) -> bool:
+    """Whether the run's shared token budget is exhausted.
+
+    Kept fail-open: any problem reading the budget returns False, so a
+    budgeting fault can never strand the pipeline in its research loop.
+    """
+    task_id = str(state.get("task_id") or "")
+    if not task_id:
+        return False
+    try:
+        from workflows.deep_research.budget import get_run_budget
+
+        budget = get_run_budget(task_id)
+        return budget is not None and budget.exhausted
+    except Exception:  # noqa: BLE001 — routing must not depend on accounting
+        return False
+
+
 def route_after_conflict_check(state: dict[str, Any]) -> str:
-    """``research_fanout`` while gaps remain and iterations are left, else ``draft``."""
+    """``research_fanout`` while gaps remain and iterations are left, else ``draft``.
+
+    A spent token budget also ends the loop: another research round would
+    have nothing to spend, and the tokens that remain are better used
+    writing up what has already been gathered than gathering more.
+    """
     gap_questions = state.get("gap_questions") or []
     iterations = int(state.get("research_iteration", 0))
     max_iterations = int(get_cfg(state, "max_research_iterations"))
-    if gap_questions and iterations < max_iterations:
+    if gap_questions and iterations < max_iterations and not _budget_spent(state):
         return "research_fanout"
     return "draft"
 

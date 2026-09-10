@@ -21,6 +21,30 @@ def today() -> str:
     return date.today().isoformat()
 
 
+def _charge_budget(
+    state: dict[str, Any], role_id: str, usage: dict[str, int] | None,
+) -> None:
+    """Charge a single-shot node call to the run's token budget.
+
+    The planner, conflict-checker, writer, reviewer and verifier never run
+    an agent loop, so the loop-level budget observer never sees them — yet
+    the writer's evidence block is one of the largest prompts in the run.
+    Leaving them uncounted would understate spend badly enough to make the
+    budget meaningless.
+    """
+    task_id = str(state.get("task_id") or "")
+    if not task_id:
+        return
+    try:
+        from workflows.deep_research.budget import _usage_tokens, get_run_budget
+
+        budget = get_run_budget(task_id, state)
+        if budget is not None:
+            budget.spend(_usage_tokens(usage), role_id=role_id)
+    except Exception as exc:  # noqa: BLE001 — accounting must never fail a node
+        logger.debug("budget accounting skipped for role=%s: %s", role_id, exc)
+
+
 async def call_role_llm(
     *,
     role_id: str,
@@ -45,6 +69,7 @@ async def call_role_llm(
             resp = await asyncio.wait_for(
                 llm.chat(messages, timeout=timeout_s), timeout=timeout_s,
             )
+            _charge_budget(state, role_id, getattr(resp, "usage", None))
             text = text_of(resp.content) or ""
             if "</think>" in text:
                 text = text.rsplit("</think>", 1)[-1]

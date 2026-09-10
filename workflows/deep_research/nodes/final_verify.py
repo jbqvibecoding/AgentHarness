@@ -79,11 +79,38 @@ async def _spot_check(state: dict[str, Any], ctx: NodeContext) -> str:
             task_id=ctx.task_id,
             profile_name=profile_name(state),
             timeout_s=float(get_cfg(state, "subagent_timeout_s")),
+            state=state,
         )
         return (result.final_content or "")[:3000]
     except Exception as exc:  # noqa: BLE001 — spot-check is best-effort
         logger.warning("verifier spot-check failed (non-fatal): %s", exc)
         return ""
+
+
+def _coverage_caveats(state: dict[str, Any]) -> str:
+    """Disclose which sub-questions were researched only partially.
+
+    A branch cut short by a token, turn, loop or wall limit still returns
+    its evidence, and that evidence still reaches the report. Saying so is
+    the difference between a partial answer and a partial answer the reader
+    mistakes for a complete one.
+    """
+    from workflows.deep_research.stop_reason import describe
+
+    capped = [
+        (note.get("question") or note.get("sub_question_id") or "?",
+         describe(note.get("stop_reason")))
+        for note in state.get("research_notes") or []
+        if note.get("stop_reason")
+    ]
+    if not capped:
+        return ""
+    lines = "\n".join(f"- {question} — {why}" for question, why in capped)
+    return (
+        "\n\n**Coverage caveats.** These sub-questions were researched only "
+        "partially; their findings are included but are less complete than "
+        f"the rest:\n{lines}\n"
+    )
 
 
 async def final_verify_node(
@@ -162,7 +189,7 @@ async def final_verify_node(
             "verdicts in state), but no final global audit was completed."
         )
 
-    final_report = f"{report}\n\n## Verification\n\n{summary}"
+    final_report = f"{report}\n\n## Verification\n\n{summary}{_coverage_caveats(state)}"
 
     logger.info(
         "deep_research final_verify (task=%s): report %d chars",

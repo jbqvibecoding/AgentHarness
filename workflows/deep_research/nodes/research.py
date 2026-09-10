@@ -181,6 +181,7 @@ async def research_fanout_node(
                 timeout_s=timeout_s,
                 extra_observers=_observers_for(t["id"]),
                 scope_metadata=scope_meta,
+                state=state,
             )
             for t in targets
         ],
@@ -222,13 +223,21 @@ async def research_fanout_node(
             )
         sq["status"] = "researched" if cards else "failed"
         new_cards.extend(cards)
-        new_notes.append({
+        note = {
             "sub_question_id": sq["id"],
             "question": sq["question"],
             "summary": (result.final_content or "")[:2000],
             "status": sq["status"],
             "turns_used": result.turns_used,
-        })
+        }
+        # Additive: present only when a limit cut this branch short. Its
+        # evidence is kept either way — a partly-researched sub-question is
+        # worth more than a discarded one, as long as we say it was partial.
+        stop_reason = (result.metadata or {}).get("stop_reason")
+        if stop_reason:
+            note["stop_reason"] = stop_reason
+            sq["stop_reason"] = stop_reason
+        new_notes.append(note)
 
     if not new_cards and all(
         isinstance(r, BaseException) for r in results

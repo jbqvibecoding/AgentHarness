@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Awaitable, Sequence
 
 from agent_harness.components.observers.leaked_tool_call_retry import (
@@ -26,7 +27,7 @@ from agent_harness.core.loop_types import (
     LoopConfig,
     LoopPolicy,
 )
-from agent_harness.core.messages import text_of, user_msg
+from agent_harness.core.messages import system_msg, text_of, user_msg
 from agent_harness.core.runtime import registry
 from agent_harness.core.runtime.loop.agent_loop import run_agent_loop
 from agent_harness.core.runtime.resources.manager import ResourceManager
@@ -54,6 +55,35 @@ def _strip_thinking(text: str) -> str:
     return text.strip()
 
 
+# Text-mode tool-call markup some models emit into visible content instead
+# of into structured tool calls. Ported from FrontierAgent
+# (workflows/stateful_react_agent/_runtime.py, Apache-2.0). Replaying this
+# markup back to the model in a recovery prompt invites it to "answer" the
+# leaked call rather than finalize.
+_LEAKED_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<\s*tool_call[^>]*>[\s\S]*?<\s*/\s*tool_call\s*>", re.IGNORECASE,
+)
+_LEAKED_TOOL_RESPONSE_BLOCK_RE = re.compile(
+    r"<\s*tool_response[^>]*>[\s\S]*?<\s*/\s*tool_response\s*>", re.IGNORECASE,
+)
+_LEAKED_FUNCTION_BLOCK_RE = re.compile(
+    r"<\s*function\s*=[\s\S]*?<\s*/\s*function\s*>", re.IGNORECASE,
+)
+_LEAKED_TAG_FRAGMENT_RE = re.compile(
+    r"<\s*(tool_call|tool_response|function)\b[^>]*>?", re.IGNORECASE,
+)
+
+
+def _strip_leaked_tool_calls(text: str) -> str:
+    """Remove text-mode tool-call markup that leaked into visible content."""
+    if not text:
+        return text
+    out = _LEAKED_TOOL_CALL_BLOCK_RE.sub("", text)
+    out = _LEAKED_TOOL_RESPONSE_BLOCK_RE.sub("", out)
+    out = _LEAKED_FUNCTION_BLOCK_RE.sub("", out)
+    return _LEAKED_TAG_FRAGMENT_RE.sub("", out).strip()
+
+
 def _build_observers(tool_names: list[str]) -> list[Any]:
     return [
         ToolCallArgsNormalizer(),
@@ -62,6 +92,59 @@ def _build_observers(tool_names: list[str]) -> list[Any]:
         RefusalRollbackObserver(),
         EmptySearchRollbackObserver(),
     ]
+
+
+def _stamp_stop_reason(
+    result: AgentLoopResult, observers: list[Any], run_id: str,
+) -> None:
+    """Record *why* a branch stopped early, as an optional extra field.
+
+    A guard's own reason wins over the one inferred from ``stopped_by``:
+    the guard knows which limit it enforced, whereas ``stopped_by`` is the
+    loop engine's coarser view of the same event.
+
+    Nothing is written when the branch finished normally, so consumers can
+    treat the key's presence as "this branch was cut short".
+    """
+    from workflows.deep_research.stop_reason import (
+        collect_stop_reason,
+        reason_from_stopped_by,
+    )
+
+    reason = (
+        collect_stop_reason(observers, run_id)
+        or reason_from_stopped_by(getattr(result, "stopped_by", None))
+    )
+    if not reason:
+        return
+    metadata = getattr(result, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata["stop_reason"] = reason
+    logger.info("subagent capped early (run=%s): %s", run_id, reason)
+
+
+def _budget_observer(
+    *, task_id: str, role_id: str, run_id: str, state: dict[str, Any] | None,
+) -> Any | None:
+    """The run-wide token budget guard, when this run has a budget.
+
+    Returns ``None`` when budgeting is off (``max_run_tokens`` of 0) or when
+    the caller passed no state to create the budget from, so an unbudgeted
+    call site behaves exactly as before.
+    """
+    from workflows.deep_research.budget import RunBudgetObserver, get_run_budget
+
+    budget = get_run_budget(task_id, state)
+    if budget is None or budget.max_tokens <= 0:
+        return None
+    warn_ratio = 0.8
+    if state is not None:
+        from workflows.deep_research.config import get_cfg
+
+        warn_ratio = float(get_cfg(state, "budget_warn_ratio"))
+    return RunBudgetObserver(
+        budget, run_id=run_id, role_id=role_id, warn_ratio=warn_ratio,
+    )
 
 
 async def run_subagent(
@@ -76,6 +159,7 @@ async def run_subagent(
     tool_result_max_chars: int = 30_000,
     extra_observers: list[Any] | None = None,
     scope_metadata: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> AgentLoopResult:
     """Run one isolated ReAct sub-agent and return its loop result.
 
@@ -86,6 +170,11 @@ async def run_subagent(
     ``extra_observers`` are appended to the default rollback stack (e.g. a
     ``VaultWriterObserver``); ``scope_metadata`` is merged into the loop's
     ExecutionScope (e.g. ``{"vault_dir": ...}`` for the vault tools).
+
+    Passing ``state`` enrols the branch in the run's shared token budget and
+    stamps ``result.metadata["stop_reason"]`` when a limit cut it short. The
+    branch still returns its findings in that case — a capped branch reports
+    what it has rather than raising and losing it.
     """
     from workflows.deep_research.profile import get_llm_for_role
 
@@ -110,6 +199,14 @@ async def run_subagent(
     )
 
     observers = _build_observers(tool_names)
+    # One run id per branch so guards keyed on it never collide between
+    # sibling branches sharing a task_id.
+    run_id = f"{task_id}:{role_id}:{id(config):x}"
+    budget_obs = _budget_observer(
+        task_id=task_id, role_id=role_id, run_id=run_id, state=state,
+    )
+    if budget_obs is not None:
+        observers.append(budget_obs)
     if extra_observers:
         observers = observers + list(extra_observers)
 
@@ -125,6 +222,7 @@ async def run_subagent(
         ),
         timeout=timeout_s,
     )
+    _stamp_stop_reason(result, observers, run_id)
 
     result.final_content = _strip_thinking(result.final_content)
     if result.final_content:
@@ -133,14 +231,11 @@ async def run_subagent(
     # Out of turns (or empty visible answer): one tool-free recovery call
     # asking for the required JSON now — simplified react_base
     # ``_force_final_answer``; failure is non-fatal, caller sees "".
-    if result.stopped_by in {"max_turns", "context_limit_reached", "no_tool"}:
+    if result.stopped_by in {
+        "max_turns", "context_limit_reached", "no_tool", "budget_exhausted",
+    }:
         try:
-            messages = list(result.messages)
-            messages.append(user_msg(
-                "Stop researching now. Output your findings immediately in "
-                "the exact final-answer format required by your "
-                "instructions (the fenced JSON block).",
-            ))
+            messages = _finalize_messages(system_prompt, result.messages)
             resp = await asyncio.wait_for(llm.chat(messages), timeout=300)
             result.final_content = _strip_thinking(text_of(resp.content))
         except Exception as exc:  # noqa: BLE001 — branch stays non-fatal
@@ -148,6 +243,55 @@ async def run_subagent(
                 "subagent forced-summary failed (role=%s): %s", role_id, exc,
             )
     return result
+
+
+_FINALIZE_INSTRUCTION = (
+    "Stop researching now. Output your findings immediately in the exact "
+    "final-answer format required by your instructions (the fenced JSON "
+    "block)."
+)
+
+
+def _finalize_messages(system_prompt: str, messages: list[Any]) -> list[Any]:
+    """Build the forced-summary request, repairing a damaged history first.
+
+    A branch that ran out of turns often ends mid-tool-call — an assistant
+    turn whose tool calls never got their results. Replaying that verbatim
+    asks the provider to accept a history that violates its own tool-call
+    pairing rules, so the salvage attempt fails with a 400 and the branch's
+    research is lost for a formatting reason.
+
+    When the transcript is malformed the history is flattened into one
+    labelled plain-text block instead (framework nudges and leaked tool-call
+    text stripped), which no longer has a protocol to violate. Healthy
+    transcripts are replayed as-is, since the real conversation is better
+    context than a flattened summary of it.
+    """
+    healthy = list(messages) + [user_msg(_FINALIZE_INSTRUCTION)]
+    try:
+        from agent_harness.components.finalization.recovery import (
+            COMMON_RECOVERY_NUDGE_PREFIXES,
+            build_recovery_context,
+            has_malformed_tool_protocol,
+        )
+
+        if not has_malformed_tool_protocol(messages):
+            return healthy
+        context = build_recovery_context(
+            messages,
+            strip_thinking=_strip_thinking,
+            strip_leaked_tool_calls=_strip_leaked_tool_calls,
+            nudge_prefixes=COMMON_RECOVERY_NUDGE_PREFIXES,
+            empty_fallback="(no usable research transcript)",
+        )
+        logger.info("subagent finalize: replaying a repaired transcript")
+        return [
+            system_msg(system_prompt),
+            user_msg(f"{context}\n\n{_FINALIZE_INSTRUCTION}"),
+        ]
+    except Exception as exc:  # noqa: BLE001 — recovery is best-effort
+        logger.debug("recovery-context build skipped: %s", exc)
+        return healthy
 
 
 async def gather_with_limit(

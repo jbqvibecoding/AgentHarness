@@ -34,7 +34,7 @@ _LEAK_XML_RE = re.compile(
     re.IGNORECASE,
 )
 
-_NUDGE_MESSAGE = (
+LEAKED_TOOL_CALL_NUDGE = (
     "Your previous response mentioned calling a tool in free text but no "
     "structured tool_call was emitted. Invoke the tool through the proper "
     "tool_calls interface now — do not describe the call in prose."
@@ -121,7 +121,13 @@ class LeakedToolCallRetryObserver(BaseObserver):
             ctx.turn, next_temp, count + 1, self._max_nudges,
         )
 
-        return Intervention(inject_messages=[_NUDGE_MESSAGE])
+        # continue_to_next_turn: the leaked turn produced no tool call,
+        # so there is nothing to execute — re-prompt immediately instead
+        # of spending the rest of the turn on empty tool handling.
+        return Intervention(
+            inject_messages=[LEAKED_TOOL_CALL_NUDGE],
+            continue_to_next_turn=True,
+        )
 
     # --------------------------------------------------------------- helpers
 
@@ -150,3 +156,6 @@ class LeakedToolCallRetryObserver(BaseObserver):
         if any(verb in lowered for verb in verb_hints):
             return True
         return False
+
+
+__all__ = ["LEAKED_TOOL_CALL_NUDGE", "LeakedToolCallRetryObserver"]

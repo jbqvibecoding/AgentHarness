@@ -54,6 +54,12 @@ _DEFAULTS: dict[str, Any] = {
     "citation_contract": True,
     "numeric_grounding": True,
     "citation_repair_rounds": 1,
+    # Cumulative token budget for the whole run, shared by every sub-agent
+    # branch and node call. 0 disables budgeting entirely. A branch is also
+    # held to max_run_tokens / max_parallel_subagents so one runaway
+    # researcher cannot drain the pool before its siblings spend anything.
+    "max_run_tokens": 2_000_000,
+    "budget_warn_ratio": 0.8,
 }
 
 DEPTH_PRESETS: dict[str, dict[str, Any]] = {
@@ -74,6 +80,7 @@ DEPTH_PRESETS: dict[str, dict[str, Any]] = {
         # The contract itself is free (prompt-only) so it stays on, but
         # the repair round costs an LLM call — quick discloses instead.
         "citation_repair_rounds": 0,
+        "max_run_tokens": 400_000,
     },
     "standard": {},
     "deep": {
@@ -86,6 +93,7 @@ DEPTH_PRESETS: dict[str, dict[str, Any]] = {
         "subagent_timeout_s": 1500,
         "verifier_spot_check": True,
         "loci_max": 6,
+        "max_run_tokens": 6_000_000,
     },
 }
 

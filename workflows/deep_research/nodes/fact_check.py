@@ -145,6 +145,7 @@ async def fact_check_node(
                 profile_name=prof,
                 timeout_s=timeout_s,
                 scope_metadata=scope_meta,
+                state=state,
             )
             for batch in batches
         ],

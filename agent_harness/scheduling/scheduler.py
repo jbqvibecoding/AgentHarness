@@ -37,17 +37,32 @@ class TaskWallTimeExceeded(RuntimeError):
 
 def _resolve_wall_time_s(
     explicit: int | None,
-    pipeline_id: str | None = None,  # noqa: ARG001 — kept for API stability
+    pipeline_id: str | None = None,
 ) -> int | None:
     """Resolve the effective wall-time budget.
 
     Priority: caller-supplied ``explicit`` > ``AGENT_HARNESS_TASK_WALL_TIME_S``
-    env var > ``None`` (no timeout).
+    env var > the workflow's own ``TASK_WALL_TIME_S`` > ``None`` (no timeout).
+
+    A workflow declaring ``TASK_WALL_TIME_MODE = "soft_research"`` inverts
+    the first two: it owns its own research deadline and consumes the
+    env/profile budget internally, so the scheduler's graph-wide ceiling
+    must sit *above* it rather than cancelling the run mid-write-up. Those
+    workflows therefore take their own ``TASK_WALL_TIME_S`` first, and an
+    explicit caller value still wins over everything.
 
     Returns ``None`` (no deadline) or a positive int.
     """
     if explicit is not None:
         return explicit if explicit > 0 else None
+
+    from agent_harness.scheduling.workflow_defaults import get_workflow_default
+
+    if get_workflow_default(pipeline_id, "TASK_WALL_TIME_MODE") == "soft_research":
+        own = get_workflow_default(pipeline_id, "TASK_WALL_TIME_S")
+        if isinstance(own, int):
+            return own if own > 0 else None
+
     raw = os.environ.get(_WALL_TIME_ENV, "").strip()
     if raw:
         try:
@@ -56,6 +71,10 @@ def _resolve_wall_time_s(
             logger.warning("Invalid %s=%r; ignoring", _WALL_TIME_ENV, raw)
         else:
             return parsed if parsed > 0 else None
+
+    workflow_default = get_workflow_default(pipeline_id, "TASK_WALL_TIME_S")
+    if isinstance(workflow_default, int):
+        return workflow_default if workflow_default > 0 else None
     return None
 
 
