@@ -94,6 +94,43 @@ def _build_observers(tool_names: list[str]) -> list[Any]:
     ]
 
 
+def _trajectory_observer(
+    *, task_id: str, role_id: str, run_id: str, scope_metadata: dict[str, Any] | None,
+) -> Any | None:
+    """Record this branch's transcript, so ``recover_result`` has a source.
+
+    A tool result is capped before it reaches the model and the remainder is
+    discarded with nothing but a truncation marker — but the full body was
+    already handed to the observers, so writing it here is what makes it
+    recoverable at all. Without a trajectory file the tool is inert.
+
+    Writes under the run's vault directory when there is one (it is already
+    the run's scratch space) and is skipped entirely otherwise, so a run
+    with nowhere to write does not silently scatter files.
+    """
+    vault_dir = (scope_metadata or {}).get("vault_dir")
+    if not vault_dir:
+        return None
+    try:
+        from pathlib import Path
+
+        from agent_harness.components.observers.trajectory import (
+            TrajectoryFileObserver,
+        )
+
+        return TrajectoryFileObserver(
+            Path(vault_dir) / "trajectories",
+            filename=run_id.replace(":", "_"),
+            formats=("jsonl",),
+        )
+    except Exception as exc:  # noqa: BLE001 — recording is not the job
+        logger.debug(
+            "trajectory recording unavailable (task=%s role=%s): %s",
+            task_id, role_id, exc,
+        )
+        return None
+
+
 def _stamp_stop_reason(
     result: AgentLoopResult, observers: list[Any], run_id: str,
 ) -> None:
@@ -207,6 +244,12 @@ async def run_subagent(
     )
     if budget_obs is not None:
         observers.append(budget_obs)
+    trajectory_obs = _trajectory_observer(
+        task_id=task_id, role_id=role_id, run_id=run_id,
+        scope_metadata=scope_metadata,
+    )
+    if trajectory_obs is not None:
+        observers.append(trajectory_obs)
     if extra_observers:
         observers = observers + list(extra_observers)
 

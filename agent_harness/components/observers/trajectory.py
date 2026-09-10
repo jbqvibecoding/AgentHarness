@@ -218,6 +218,40 @@ class TrajectoryFileObserver(BaseObserver):
             return dict(m)
         return None
 
+    # ``recover_result`` reads this key to find the file holding the tool
+    # bodies the model never saw. Published on the ExecutionScope object
+    # rather than a contextvar: this observer is non-critical, so its hooks
+    # are dispatched as separate tasks where a contextvar write is invisible
+    # to the loop. The scope object is shared by reference, so its dict is
+    # not. Absence of the key means no handle can be minted, which is how a
+    # jsonl-disabled configuration degrades cleanly.
+    SCOPE_KEY = "trajectory_jsonl"
+
+    def _publish_jsonl_path(self) -> None:
+        from agent_harness.core.execution_context import (
+            get_current_execution_scope,
+        )
+
+        scope = get_current_execution_scope()
+        if scope is None:
+            return
+        if "jsonl" not in self._formats:
+            scope.metadata.pop(self.SCOPE_KEY, None)
+            return
+        # Deliberately not ``_path()``: that mkdirs, and answering "where is
+        # my trajectory" must not create directories.
+        stem = self._safe(self._filename or self._task_id or "trace")
+        scope.metadata[self.SCOPE_KEY] = str(self._dir / f"{stem}.jsonl")
+
+    def _withdraw_jsonl_path(self) -> None:
+        from agent_harness.core.execution_context import (
+            get_current_execution_scope,
+        )
+
+        scope = get_current_execution_scope()
+        if scope is not None:
+            scope.metadata.pop(self.SCOPE_KEY, None)
+
     # ── Lifecycle hooks ─────────────────────────────────────────────────
 
     async def on_loop_start(self, config: LoopConfig) -> None:
@@ -240,6 +274,7 @@ class TrajectoryFileObserver(BaseObserver):
         if self._tool_names:
             start_record["tool_names"] = self._tool_names
         self._write_jsonl(start_record)
+        self._publish_jsonl_path()
         self._flush_json()
 
     async def on_llm_response(
@@ -311,6 +346,10 @@ class TrajectoryFileObserver(BaseObserver):
             "t": "result",
             "turn": ctx.turn,
             "name": result.name,
+            # Needed by ``recover_result`` to address one specific result.
+            # An absent id must not be written as "", or a scan would match
+            # the turn's last result and confidently return the wrong body.
+            "tool_call_id": getattr(result, "tool_call_id", "") or "",
             "result": result.result,
             "error": result.is_error,
             "ms": result.duration_ms,
@@ -349,4 +388,5 @@ class TrajectoryFileObserver(BaseObserver):
             "stopped_by": result.stopped_by,
         })
         self._close_jsonl()
+        self._withdraw_jsonl_path()
         self._flush_json()

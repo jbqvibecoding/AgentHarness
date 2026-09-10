@@ -12,7 +12,10 @@ from agent_harness.models.agent_definition import AgentDefinition
 
 from workflows.deep_research import prompts as P
 
-_WEB_TOOLS = ["web_search", "web_fetch"]
+# ``recover_result`` rides along with the web tools: web_fetch is the
+# tool whose results get truncated before the model sees them, so the
+# roles that call it are exactly the roles that may need the tail back.
+_WEB_TOOLS = ["web_search", "web_fetch", "recover_result"]
 
 PLANNER_DEF = AgentDefinition(
     role_id="dr_planner",

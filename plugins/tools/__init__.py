@@ -1,13 +1,14 @@
 """AgentHarness built-in tools.
 
-Exposes the three tools the ``react_base`` workflow binds to its
-``react_solver`` agent role: ``web_search`` / ``web_fetch`` /
-``run_python_code``.
+``react_base`` binds ``web_search`` / ``web_fetch`` / ``run_python_code``;
+``deep_research`` additionally uses the local evidence-vault lookups and
+``recover_result``.
 """
 
 from __future__ import annotations
 
 from agent_harness.core.tool import Tool
+from plugins.tools.recover_result import recover_result
 from plugins.tools.run_python_code import run_python_code
 from plugins.tools.vault_tools import vault_get, vault_search
 from plugins.tools.web_fetch import web_fetch
@@ -22,6 +23,10 @@ _BUILTIN_TOOLS: list[Tool] = [
     # No-op safely when no vault is active (see vault_tools).
     vault_get,
     vault_search,
+    # Reads back the tail of a tool result that was truncated before it
+    # reached the model. In-process, addressed by an opaque (turn, call_id)
+    # handle, so there is no path for the model to traverse.
+    recover_result,
 ]
 
 
@@ -32,6 +37,7 @@ def get_builtin_tools() -> dict[str, Tool]:
 
 __all__ = [
     "get_builtin_tools",
+    "recover_result",
     "run_python_code",
     "vault_get",
     "vault_search",

@@ -1,4 +1,4 @@
-"""Web fetch tool — Jina scrape + SUMMARY_LLM extraction.
+"""Web fetch tool — guarded scrape + SUMMARY_LLM extraction.
 
 Tool behaviour:
 
@@ -7,12 +7,27 @@ Tool behaviour:
   ``info_to_extract: str | list[str]`` — multi-URL fetch in **one turn**
   via ``asyncio.gather``.
 - ``info_to_extract`` is required (no default).
-- Pipeline is plain Jina → fallback to direct httpx → SUMMARY_LLM
-  extraction. No academic backend routing, no scrape-cache.
 - Output format ``[N] URL: ...\\n    Info: ...`` for both single and
   multi-URL calls.
 
-Used by :mod:`workflows.react_base`.
+Fetch pipeline, in order:
+
+1. **SSRF vetting** — the URL and *every redirect hop* must resolve to a
+   public address. Validating only the initial URL is the classic hole: a
+   public URL that redirects to ``169.254.169.254`` passes it.
+2. **Negative cache / host circuit-breaker** — a URL that just returned
+   403/429 is skipped rather than re-fetched. Parallel researchers
+   otherwise hammer the same blocked host in lockstep.
+3. **Positive cache with single-flight** — concurrent callers for the same
+   URL share one upstream round-trip, and a page fetched once in a run is
+   not fetched again. This is what makes cross-researcher URL dedup real
+   rather than a prompt-level convention the model may ignore.
+4. **Academic routing** — PMC / PubMed / bioRxiv / Unpaywall / Crossref
+   get full text where the generic reader would return an abstract stub or
+   a paywall page.
+5. Jina reader → direct httpx fallback → SUMMARY_LLM extraction.
+
+Used by :mod:`workflows.react_base` and :mod:`workflows.deep_research`.
 
 Required env vars:
   JINA_API_KEY / JINA_BASE_URL — primary scraper
@@ -20,6 +35,11 @@ Required env vars:
     — cheap LLM that does ``info_to_extract`` post-processing. Without
       this the tool returns ``[ERROR]: Extraction failed:
       SUMMARY_LLM_BASE_URL not set``.
+
+Optional env vars:
+  WEB_FETCH_SSRF_GUARD=0     — disable public-address vetting
+  WEB_FETCH_ACADEMIC=0       — disable academic backend routing
+  SCRAPE_POSITIVE_CACHE=0    — disable the positive cache / single-flight
 """
 
 from __future__ import annotations
@@ -344,26 +364,120 @@ async def _extract_info_with_llm(
 # ── Single-URL fetch + extract ────────────────────────────────────────
 
 
-async def _fetch_single(
-    url: str,
-    info_to_extract: str,
-    custom_headers: dict[str, str] | None = None,
-) -> str:
-    """Scrape one URL (Jina → fallback to direct) then run LLM extraction."""
-    if any(pat in url for pat in _BANNED_URL_PATTERNS):
-        return "Blocked: scraping Hugging Face datasets/spaces is not allowed."
+def _flag(name: str, default: bool = True) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+async def _academic_content(url: str) -> str:
+    """Full text via a publisher-specific backend, or ``""`` to fall through.
+
+    The generic reader on a PubMed or paywalled-journal URL returns an
+    abstract stub or a login wall — content that looks like a successful
+    fetch and silently starves the researcher of the actual findings.
+    """
+    from plugins.tools import _academic_fetch as af
+
+    route = af.route_url(url)
+    if route == "jina":
+        return ""
+    try:
+        if route == "pmc":
+            return await af.fetch_pmc_fulltext(af.extract_pmcid(url))
+        if route == "pubmed":
+            pmcid = await af.pubmed_to_pmc(url)
+            return await af.fetch_pmc_fulltext(pmcid) if pmcid else ""
+        if route == "biorxiv":
+            pdf = af.biorxiv_to_pdf(url)
+            return "" if pdf == url else ""
+        if route == "paywall":
+            doi = af.extract_doi(url)
+            oa_url = await af.fetch_unpaywall_oa_url(doi) if doi else ""
+            if oa_url and oa_url != url:
+                scrape = await _scrape_url_with_jina(oa_url, None)
+                if scrape["success"]:
+                    return scrape["content"]
+    except Exception as exc:  # noqa: BLE001 — routing is an optimisation
+        logger.debug("academic route %s failed for %s: %s", route, url, exc)
+    return ""
+
+
+async def _scrape(url: str, custom_headers: dict[str, str] | None) -> str:
+    """Scrape one URL, raising ``ScrapeUnavailable`` so failures are cached."""
+    from plugins.tools._scrape_cache import ScrapeUnavailable
+
+    if _flag("WEB_FETCH_ACADEMIC"):
+        content = await _academic_content(url)
+        if content:
+            return content
 
     scrape = await _scrape_url_with_jina(url, custom_headers)
     if not scrape["success"]:
         logger.warning("Jina failed for %s: %s, trying direct", url, scrape["error"])
         scrape = await _scrape_url_with_python(url, custom_headers)
-        if not scrape["success"]:
-            return f"[ERROR]: Scraping failed: {scrape['error']}"
+    if not scrape["success"]:
+        raise ScrapeUnavailable(scrape["error"] or "scrape failed")
+    return scrape["content"]
 
-    result = await _extract_info_with_llm(scrape["content"], info_to_extract)
+
+async def _fetch_single(
+    url: str,
+    info_to_extract: str,
+    custom_headers: dict[str, str] | None = None,
+) -> str:
+    """Vet, dedupe, scrape and extract one URL."""
+    from plugins.tools import _scrape_cache as sc
+    from plugins.tools._academic_fetch import is_garbage_content
+    from plugins.tools._bounded_fetch import non_public_url_error
+
+    if any(pat in url for pat in _BANNED_URL_PATTERNS):
+        return "Blocked: scraping Hugging Face datasets/spaces is not allowed."
+
+    if _flag("WEB_FETCH_SSRF_GUARD"):
+        refusal = await non_public_url_error(url)
+        if refusal:
+            return f"[ERROR]: {refusal}"
+
+    # A host that just refused us will refuse the next researcher too;
+    # skipping is both faster and less likely to deepen a rate-limit ban.
+    banned = sc.cache.check(url)
+    if banned is not None:
+        return f"[ERROR]: {sc.format_skip_message(url, banned)}"
+
+    try:
+        content = await sc.scrape_result_cache.get_or_scrape(
+            url,
+            lambda: _scrape(url, custom_headers),
+            # Anti-bot pages and login walls are "successful" fetches of
+            # nothing. Caching one would serve the wall to every later
+            # caller for the rest of the run.
+            should_cache=lambda text: bool(text) and not is_garbage_content(text),
+        )
+    except sc.ScrapeUnavailable as exc:
+        sc.cache.record_failure(url, _status_of(exc))
+        return f"[ERROR]: Scraping failed: {exc}"
+    except Exception as exc:  # noqa: BLE001 — a fetch failure is not fatal
+        return f"[ERROR]: Scraping failed: {exc}"
+
+    sc.cache.record_success(url)
+    result = await _extract_info_with_llm(content, info_to_extract)
     if not result["success"]:
         return f"[ERROR]: Extraction failed: {result['error']}"
     return result["extracted_info"]
+
+
+def _status_of(exc: BaseException) -> int:
+    """Best-effort HTTP status from a scrape failure, for the ban rules."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    text = str(exc)
+    for code in (403, 429, 422):
+        if str(code) in text:
+            return code
+    return 0
 
 
 # ── Tool ──────────────────────────────────────────────────────────────
