@@ -76,6 +76,10 @@ def _appendix(
         lines.extend(f"- {issue}" for issue in issues)
     suspects = list(getattr(grounding, "suspect", ()) or ())
     if suspects:
+        if lines:
+            # Markdown needs the blank line, or the heading is absorbed
+            # into the preceding list.
+            lines.append("")
         lines.append(
             "**Numbers not found in their cited source** "
             "(treat these as unverified):",
